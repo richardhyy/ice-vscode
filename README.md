@@ -2,7 +2,7 @@
 
 FlowChat is a flexible, easy-to-use VSCode extension that allows users to experiment with conversational AI using various large language models (LLMs). With FlowChat, you can easily chat with LLMs, manage conversation histories, and even create custom LLM integrations.
 
-![FlowChat Screenshot](screenshot.png)
+![FlowChat Screenshot](images/screenshot.png)
 
 ## Features
 

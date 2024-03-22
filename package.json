@@ -1,8 +1,11 @@
 {
   "name": "flowchat",
   "displayName": "FlowChat",
+  "icon": "images/icon.png",
   "description": "LLM conversations in VSCode",
-  "version": "0.0.1",
+  "repository": "https://github.com/richardhyy/flowchat-vscode",
+  "publisher": "LeaForest",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.84.0"
   },

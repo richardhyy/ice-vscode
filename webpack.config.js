@@ -25,8 +25,8 @@ const extensionConfig = {
     new CopyPlugin({
       patterns: [
       {
-        from: './src/providers',
-        to: 'providers'
+        from: './providers',
+        to: 'providers',
       }
       ]
     })
@@ -87,6 +87,9 @@ const extensionConfig = {
   devtool: 'nosources-source-map',
   infrastructureLogging: {
     level: "log", // enables logging required for problem matchers
+  },
+  optimization: {
+    minimize: false, // Disable minification for the entire bundle
   },
 };
 module.exports = [ extensionConfig ];
