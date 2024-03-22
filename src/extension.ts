@@ -235,6 +235,11 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
 
           const provider = await this.providerManager.getProviderById(latestMessage.provider);
 
+          if (!provider) {
+            vscode.window.showErrorMessage(`Provider ${latestMessage.provider} not found. Please select a different provider.`);
+            break;
+          }
+
           updateProviderStatusBar(provider?.info['name'] || provider?.id);
 
           let newMessage: ChatMessage = {

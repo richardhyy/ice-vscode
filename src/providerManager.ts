@@ -341,6 +341,11 @@ export class ProviderManager {
   }
 
   public async getProviderById(providerId: string): Promise<Provider | undefined> {
+    if (!this.providers[providerId]) {
+      console.warn(`Provider not found: ${providerId}`);
+      return undefined;
+    }
+
     const { config } = this.providers[providerId];
 
     // Return a Provider interface that uses the existing or newly initialized child process.
