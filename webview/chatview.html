@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Chat View</title>
+    <link rel="stylesheet" href="./main.css" />
+    <script src="./libs/marked.min.js"></script>
+    <script src="./libs/purify.min.js"></script>
+  </head>
+  <body>
+    <div id="conversation-scroll-container">
+      <div id="conversation-container">
+        <!-- Conversation structure will be dynamically generated here -->
+      </div>
+    </div>
+
+    <div class="progress-container">
+      <div class="progressing-indicator">
+        <span class="dot"></span>
+        <span class="dot"></span>
+        <span class="dot"></span>
+      </div>
+      <div class="progress-label">
+        Text Completion in Progress
+      </div>
+      <div id="progress-cancel-button" class="progress-cancel-button" title="Cancel">
+      </div>
+    </div>
+
+    <script src="./icons.js"></script>
+
+    <script>
+      function auto_grow(element) {
+        element.style.height = "5px";
+        element.style.height = (element.scrollHeight) + "px";
+      }
+
+      function setProgressIndicator(text, cancelableRequestID) {
+        const container = document.querySelector(".progress-container");
+        if (text) {
+          document.querySelector(".progress-label").textContent = text;
+          container.classList.add("show");
+        } else {
+          container.classList.remove("show");
+        }
+        const cancelButton = document.getElementById("progress-cancel-button");
+        if (cancelableRequestID) {
+          cancelButton.onclick = () => {
+            vscode.postMessage({
+              type: "cancelRequest",
+              requestID: cancelableRequestID,
+            });
+          };
+          cancelButton.classList.add("show");
+        } else {
+          cancelButton.onclick = null;
+          cancelButton.classList.remove("show");
+        }
+      }
+    </script>
+
+    <script>
+      const vscode = acquireVsCodeApi();
+
+      const messageInput = document.getElementById("message-input");
+      const sendButton = document.getElementById("send-button");
+      const conversationContainer = document.getElementById(
+        "conversation-container"
+      );
+
+      let flatMessages = {};
+      let messageIdWithChildren = {}; // {messageId: [childId1, childId2, ...]}
+      let activePath = [];
+      let currentProvider = null;
+
+      let globalUndoLock = null;
+
+      function updateFlatMessages(message) {
+        delete message.action;
+        flatMessages[message.id] = message;
+      }
+
+      /**
+       * Build the message tree from the flat messages
+       */
+      function scanMessageTree() {
+        // Remove nodes whose parent is not in the flat messages
+        Object.values(flatMessages).forEach((message) => {
+          if (message.parentID && !flatMessages[message.parentID]) {
+            delete flatMessages[message.id];
+          }
+        });
+
+        messageIdWithChildren = {};
+        Object.values(flatMessages).forEach((message) => {
+          if (message.parentID) {
+            if (!messageIdWithChildren[message.parentID]) {
+              messageIdWithChildren[message.parentID] = [];
+            }
+            messageIdWithChildren[message.parentID].push(message.id);
+          }
+        });
+      }
+
+      function getPathWithMessage(messageID) {
+        const path = [];
+        let currentMessage = flatMessages[messageID];
+        // Find the path from the message to the root
+        while (currentMessage) {
+          path.unshift(currentMessage.id);
+          currentMessage = flatMessages[currentMessage.parentID];
+        }
+
+        // Find the path from the message to the latest child
+        let children = messageIdWithChildren[messageID];
+        while (children && children.length > 0) {
+          // Pick the latest child to push to the path
+          const latestChild = children[children.length - 1];
+          path.push(latestChild);
+          children = messageIdWithChildren[latestChild];
+        }
+
+        return path;
+      }
+
+      function _handleMessageSubmit(content, message) {
+        if (currentProvider === null) {
+          vscode.postMessage({
+            type: "error",
+            error: "Please select a chat provider first",
+          });
+          console.error("No chat provider selected");
+          return;
+        }
+
+        if (content.trim() === "") {
+          // Silently ignore empty messages
+          console.log("Empty message ignored");
+          return;
+        }
+
+        if (flatMessages[message.id] === undefined) {
+          // If the message is a shadow message, create a new message
+          message = {
+            id: Date.now(),
+            role: "user",
+            content,
+            provider: currentProvider,
+            parentID: message.parentID,
+            timestamp: new Date().toISOString(),
+          };
+          addMessage(message);
+        } else {
+          // Edit the message if it's an existing message
+          message.content = content;
+          vscode.postMessage({
+            type: "editMessage",
+            messageId: message.id,
+            updates: {
+              content: content,
+              provider: currentProvider,
+            }
+          });
+        }
+
+        updateFlatMessages(message);
+        scanMessageTree();
+        activePath = getPathWithMessage(message.id);
+        renderConversation();
+
+        if (message.role === "user" && (!messageIdWithChildren[message.id] || messageIdWithChildren[message.id].length === 0)) {
+          // Send the message if it's a user message and has no children, i.e. it's the last message in the conversation
+          sendMessage(message);
+        }
+      }
+
+      function _renderMarkdown(content, singleBreakForNewLine = false) {
+        return DOMPurify.sanitize(marked.parse(content, { "breaks": singleBreakForNewLine }));
+      }
+
+      function createMessageNode(message, clipContent = false, editing = false) {
+        const messageNode = document.createElement("div");
+        messageNode.classList.add("message-node");
+        messageNode.dataset.id = message.id;
+        messageNode.dataset.vscodeContext = JSON.stringify({ webviewSection: "messageNode", messageRole: message.role });
+        
+        //`{"webviewSection": "messageNode"}`;
+
+        if (editing) {
+          const cancelButtonElement = document.createElement("button");
+          cancelButtonElement.className =
+            "edit-operation-button edit-operation-button-cancel";
+          cancelButtonElement.innerHTML = ICON_X;
+          cancelButtonElement.addEventListener("click", function () {
+            // Cancel editing
+            messageNode.replaceWith(createMessageNode(message, false, false));
+          });
+          messageNode.appendChild(cancelButtonElement);
+        }
+
+        const messageContent = document.createElement("div");
+        messageContent.classList.add("message-content");
+        messageNode.appendChild(messageContent);
+
+        if (editing) {
+          const submitButtonElement = document.createElement("button");
+          submitButtonElement.className =
+            "edit-operation-button edit-operation-button-submit";
+          submitButtonElement.innerHTML =
+            message.role === "user" &&
+            (!messageIdWithChildren[message.id] || messageIdWithChildren[message.id].length === 0)
+              ? ICON_ARROW_RIGHT
+              : ICON_CHECK;
+          submitButtonElement.addEventListener("click", function () {
+            // Submit editing
+            _handleMessageSubmit(
+              messageContent.querySelector("textarea").value,
+              message
+            );
+          });
+          messageNode.appendChild(submitButtonElement);
+        }
+
+        if (editing) {
+          messageContent.classList.add("message-content-editing");
+
+          const inputElement = document.createElement("textarea");
+          inputElement.dataset.id = message.id;
+          inputElement.value = message.content;
+          inputElement.placeholder =
+            message.role === "user"
+              ? "Type a message..."
+              : "Type a response...";
+          inputElement.spellcheck = true;
+          inputElement.addEventListener("keydown", function (event) {
+            if (event.key === "Enter" && event.metaKey) {
+              event.preventDefault();
+              _handleMessageSubmit(event.target.value, message);
+            } else {
+              const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+
+              if (isMac) {
+                if (event.metaKey && event.key === 'z') {
+                  event.preventDefault();
+                  if (event.shiftKey) {
+                    document.execCommand('redo');
+                  } else {
+                    document.execCommand('undo');
+                  }
+                }
+              } else {
+                if (event.ctrlKey && event.key === 'z') {
+                  event.preventDefault();
+                  document.execCommand('undo');
+                } else if (event.ctrlKey && event.key === 'y') {
+                  event.preventDefault();
+                  document.execCommand('redo');
+                }
+              }
+            }
+          });
+          inputElement.addEventListener("input", function (event) {
+            auto_grow(event.target);
+          });
+          inputElement.addEventListener("focus", function (event) {
+            auto_grow(event.target);
+            globalUndoLock = message.id;
+          });
+          inputElement.addEventListener("blur", function (event) {
+            if (globalUndoLock === message.id) {
+              globalUndoLock = null;
+            }
+          });
+
+          const inputRemoveObserver = new MutationObserver(function (mutations) {
+            mutations.forEach(function (mutation) {
+              if (mutation.type === 'childList') {
+                for (let i = 0; i < mutation.removedNodes.length; i++) {
+                  const removedNode = mutation.removedNodes[i];
+                  if (removedNode.tagName === 'TEXTAREA' && removedNode.dataset.id === message.id) {
+                    if (globalUndoLock === message.id) {
+                      // If the removed node is the input element that has the global undo lock
+                      globalUndoLock = null;
+                    } else {
+                      // Remove observer
+                      inputRemoveObserver.disconnect();
+                    }
+                  }
+                }
+              }
+            });
+          });
+
+          messageContent.append(inputElement);
+        } else {
+          const renderedContent = _renderMarkdown(message.content + (message.incomplete && message.content.length === 0 ? "..." : ""), message.role === "user");
+          if (clipContent) {
+            const clippedContent = document.createElement("div");
+            clippedContent.classList.add("clipped-content");
+            clippedContent.innerHTML = renderedContent
+            messageContent.appendChild(clippedContent);
+          } else {
+            messageContent.innerHTML = renderedContent
+          }
+          
+          if (!message.incomplete) {
+            // Find code blocks and add copy buttons
+            const codeBlocks = messageContent.querySelectorAll('pre');
+            for (const codeBlock of codeBlocks) {
+              const copyButton = document.createElement('button');
+              copyButton.className = 'copy-button';
+              copyButton.innerHTML = ICON_COPY;
+              copyButton.addEventListener('click', function () {
+                const code = codeBlock.querySelector('code');
+                if (code) {
+                  const range = document.createRange();
+                  range.selectNode(code);
+                  window.getSelection().removeAllRanges();
+                  window.getSelection().addRange(range);
+                  document.execCommand('copy');
+                  window.getSelection().removeAllRanges();
+                }
+
+                copyButton.innerHTML = ICON_CHECK;
+              });
+              codeBlock.appendChild(copyButton);
+            }
+          }
+        }
+
+        return messageNode;
+      }
+
+      function renderSiblingMessagesOf(message) {
+        const shadowSiblingMessageContainer = document.createElement("div");
+
+        if (message.parentID !== null) {
+          shadowSiblingMessageContainer.classList.add("shadow-message-container");
+          if (message.role === "user") {
+            shadowSiblingMessageContainer.classList.add("user");
+          }
+          const siblings = messageIdWithChildren[message.parentID];
+          if (siblings && siblings.length > 1) {
+            for (const siblingID of siblings) {
+              if (siblingID !== message.id) {
+                const siblingMessage = flatMessages[siblingID];
+                const siblingMessageNode = createMessageNode(siblingMessage, true, false);
+                siblingMessageNode.onclick = () => {
+                  activePath = getPathWithMessage(siblingID);
+                  renderConversation();
+                  shadowSiblingMessageContainer.remove();
+                };
+                shadowSiblingMessageContainer.appendChild(siblingMessageNode);
+              }
+            }
+          }
+        }
+
+        return shadowSiblingMessageContainer;
+      }
+
+      function createMessageContainer(message, editing = false, shouldAnimate = false) {
+        const messageContainer = document.createElement("div");
+        messageContainer.classList.add("message-container");
+        messageContainer.classList.add(message.role);
+        messageContainer.dataset.id = message.id;
+        const messageNodesContainer = document.createElement("div");
+        messageNodesContainer.classList.add("message-nodes-container");
+        messageContainer.appendChild(messageNodesContainer);
+
+        if (shouldAnimate) {
+          messageContainer.classList.add("animated");
+        } else {
+          messageContainer.classList.add("static");
+        }
+
+        const messageNode = createMessageNode(message, false, editing);
+        messageNodesContainer.appendChild(messageNode);
+
+        if (message.parentID) {
+          const siblings = messageIdWithChildren[message.parentID];
+          if (siblings && siblings.length > 1) {
+            // If there are siblings (i.e. more than 1 child of the same parent)
+            const siblingSwitcher = document.createElement("div");
+            messageNodesContainer.appendChild(siblingSwitcher);
+
+            siblingSwitcher.classList.add("sibling-switcher", "inactive");
+            siblingSwitcher.textContent = "Branches";
+            siblingSwitcher.onclick = () => {
+              if (siblingSwitcher.classList.contains("inactive")) {
+                siblingSwitcher.classList.remove("inactive");
+                siblingSwitcher.classList.add("active");
+                siblingSwitcher.textContent = "Collapse Branches";
+                const shadowSiblingMessageContainer =
+                  renderSiblingMessagesOf(message);
+                siblingSwitcher.insertAdjacentElement(
+                  "beforebegin",
+                  shadowSiblingMessageContainer
+                );
+              } else {
+                siblingSwitcher.classList.remove("active");
+                siblingSwitcher.classList.add("inactive");
+                siblingSwitcher.textContent = "Branches";
+                messageContainer
+                  .querySelector(".shadow-message-container")
+                  .remove();
+              }
+            };
+          }
+        }
+
+        return messageContainer;
+      }
+
+      function rerenderMessage(messageID, editing = false) {
+        const message = flatMessages[messageID];
+        const messageContainer = createMessageContainer(message, editing);
+        const oldMessageContainer = document.querySelector(
+          `.message-container[data-id="${messageID}"]`
+        );
+        oldMessageContainer.replaceWith(messageContainer);
+      }
+
+      function _renderInputShadowMessage(parentMessageID) {
+        const emptyUserMessage = {
+          id: Date.now(),
+          isShadow: true,
+          role: "user",
+          content: "",
+          provider: currentProvider,
+          parentID: parentMessageID,
+          timestamp: new Date().toISOString(),
+        };
+        const messageContainer = createMessageContainer(emptyUserMessage, true);
+        conversationContainer.appendChild(messageContainer);
+
+        focusMessageInput(emptyUserMessage.id);
+      }
+
+      function renderConversation(shouldAnimateLastMessage = false) {
+        conversationContainer.innerHTML = "";
+        // Render messages in the active path
+        activePath.forEach((messageID) => {
+          const message = flatMessages[messageID];
+          const messageContainer = createMessageContainer(message, false, shouldAnimateLastMessage && messageID === activePath[activePath.length - 1]);
+          conversationContainer.appendChild(messageContainer);
+        });
+
+        if (activePath.length > 0) {
+          const lastMessage = flatMessages[activePath[activePath.length - 1]];
+          if (lastMessage.role === "user") {
+            // If the last message is a user message, re-render it in editing mode
+            rerenderMessage(lastMessage.id, true);
+
+            focusMessageInput(lastMessage.id);
+          } else {
+            // If the last message is not a user message, render an empty user message in editing mode
+            _renderInputShadowMessage(lastMessage.id);
+          }
+        } else {
+          // If there is no active path, render an empty user message
+          _renderInputShadowMessage(null);
+        }
+      }
+
+      function focusMessageInput(messageID) {
+        const messageNode = document.querySelector(
+          `.message-node[data-id="${messageID}"]`
+        );
+        if (messageNode) {
+          const inputElement = messageNode.querySelector("textarea");
+          if (inputElement) {
+            inputElement.focus();
+          }
+        }
+      }
+
+      function handleLoadActions(actions, append = false) {
+        if (!append) {
+          // Clear the messages if not appending
+          flatMessages = {};
+        }
+
+        actions.forEach((action) => {
+          if (action.action === "Add") {
+            updateFlatMessages(action);
+          } else if (action.action === "Edit") {
+            const message = flatMessages[action.id];
+            updateFlatMessages({ ...message, ...action });
+          } else if (action.action === "Delete") {
+            delete flatMessages[action.id];
+          }
+        });
+        scanMessageTree();
+        const lastMessage = getLastMessage();
+        if (lastMessage) {
+          activePath = getPathWithMessage(lastMessage.id);
+          selectProvider(lastMessage.provider);
+        }
+        renderConversation();
+        console.log("activePath", activePath);
+      }
+
+      function getLastMessage() {
+        const lastMessage = Object.values(flatMessages).reduce(
+          (lastMsg, msg) => {
+            const lastMsgDate = new Date(lastMsg.timestamp);
+            const msgDate = new Date(msg.timestamp);
+            return msgDate > lastMsgDate ? msg : lastMsg;
+          },
+          { timestamp: "0" }
+        );
+        return lastMessage;
+      }
+
+      function handleUpdateMessage(message, incomplete = false) {
+        message.incomplete = incomplete;
+        updateFlatMessages(message);
+        scanMessageTree();
+
+        // If the message is not in the active path, update the active path
+        if (!activePath.find((id) => id === message.id)) {
+          activePath = getPathWithMessage(message.id);
+          renderConversation(true);
+        } else {
+          // If the message is in the active path, rerender the message
+          rerenderMessage(message.id);
+        }
+      }
+
+      function deleteMessage(messageID) {
+        const message = flatMessages[messageID];
+        delete flatMessages[messageID];
+        scanMessageTree();
+        activePath = getPathWithMessage(message.parentID);
+        renderConversation();
+        vscode.postMessage({
+          type: "deleteMessage",
+          messageId: messageID,
+        });
+      }
+
+      function toggleEdit(messageID) {
+        const messageNode = document.querySelector(
+          `.message-node[data-id="${messageID}"]`
+        );
+        const message = flatMessages[messageID];
+        const messageContent = messageNode.querySelector(".message-content");
+        const messageContentEditing = createMessageNode(message, false, true);
+        messageContent.replaceWith(messageContentEditing);
+
+        focusMessageInput(messageID);
+      }
+
+      function regenerateMessage(messageID) {
+        const message = flatMessages[messageID];
+        if (message && message.role === "assistant") {
+          const parentMessage = flatMessages[message.parentID];
+          if (parentMessage) {
+            sendMessage(parentMessage);
+          } else {
+            vscode.postMessage({
+              type: "error",
+              error: "No parent message found for this message",
+            });
+          }
+        } else {
+          vscode.postMessage({
+            type: "error",
+            error: "Only assistant messages can be regenerated",
+          });
+        }
+      }
+
+      function resendMessage(messageID) {
+        const message = flatMessages[messageID];
+        if (message && message.role === "user") {
+          sendMessage(message);
+        } else {
+          vscode.postMessage({
+            type: "error",
+            error: "Only user messages can be resent",
+          });
+        }
+      }
+
+      function contextMenuOperation(operation) {
+        const cursorHoverElements = document.querySelectorAll(":hover");
+
+        let messageID;
+        for (const element of cursorHoverElements) {
+          if (element.classList.contains("message-node")) {
+            messageID = element.dataset.id;
+            break;
+          }
+        }
+        if (!messageID) {
+          console.error("No message node found in the cursor hover elements");
+          return;
+        }
+
+        switch (operation) {
+          case "duplicate":
+            const message = flatMessages[messageID];
+            const newMessage = {
+              id: Date.now(),
+              role: message.role,
+              content: message.content,
+              provider: message.provider,
+              parentID: message.parentID,
+              timestamp: new Date().toISOString(),
+            };
+            updateFlatMessages(newMessage);
+            scanMessageTree();
+            activePath = getPathWithMessage(newMessage.id);
+            renderConversation();
+
+            addMessage(newMessage);
+            break;
+          case "delete":
+            vscode.postMessage({
+              type: "confirmAction",
+              message: `Are you sure to delete this message? (${flatMessages[
+                messageID
+              ].content.substring(0, 20)}...)`,
+              onConfirm: {
+                type: "deleteMessage",
+                messageID: messageID,
+              },
+            });
+            break;
+          case "toggleEdit":
+            toggleEdit(messageID);
+            break;
+          case "regenerate":
+            regenerateMessage(messageID);
+            break;
+          case "resend":
+            resendMessage(messageID);
+            break;
+          case "copy":
+            vscode.postMessage({
+              type: "setClipboard",
+              text: flatMessages[messageID].content,
+            });
+            break;
+          default:
+            console.error("Unknown context menu operation", operation);
+        }
+      }
+
+      window.addEventListener("message", (event) => {
+        const message = event.data;
+        switch (message.type) {
+          case "loadActions":
+            handleLoadActions(message.actions);
+            break;
+          case "appendAction":
+            handleLoadActions(message.actions, true);
+            break;
+          case "updateMessage":
+            handleUpdateMessage(message.message, message.incomplete);
+            break;
+          case "deleteMessage":
+            deleteMessage(message.messageID);
+            break;
+          case "contextMenuOperation":
+            contextMenuOperation(message.operation);
+            break;
+          case "selectProvider":
+            currentProvider = message.providerId;
+            break;
+          case "progress":
+            setProgressIndicator(message.text, message.cancelableRequestID);
+            break;
+          case "undo":
+          case "redo":
+            if (globalUndoLock) {
+              console.log("Global undo lock is active, ignoring undo/redo");
+            } else {
+              console.log("Undo/Redo", message.type);
+              vscode.postMessage({
+                type: message.type,
+              });
+            }
+            break;
+          default:
+            console.error("Unknown message type", message.type);
+        }
+      });
+
+      function sendMessage(leafMessage) {
+        const fullPath = getPathWithMessage(leafMessage.id);
+        const leafMessageIndex = fullPath.indexOf(leafMessage.id);
+        const path = fullPath.slice(0, leafMessageIndex + 1);
+        vscode.postMessage({
+          type: "sendMessage",
+          messageTrail: path.map((id) => flatMessages[id]),
+        });
+      }
+
+      function addMessage(message) {
+        vscode.postMessage({
+          type: "addMessage",
+          message: message,
+        });
+      }
+
+      function selectProvider(providerID) {
+        currentProvider = providerID;
+        vscode.postMessage({
+          type: "selectProvider",
+          providerId: providerID,
+        });
+      }
+    </script>
+  </body>
+</html>

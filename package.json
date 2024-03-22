@@ -1,0 +1,162 @@
+{
+  "name": "flowchat",
+  "displayName": "FlowChat",
+  "description": "LLM conversations in VSCode",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "chat",
+    "llm",
+    "ChatGPT",
+    "Claude",
+    "api"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "chat-view.open",
+        "title": "Open Chat View"
+      },
+      {
+        "command": "chat-view.undo",
+        "title": "Undo"
+      },
+      {
+        "command": "chat-view.redo",
+        "title": "Redo"
+      },
+      {
+        "command": "chat-view.message.copy",
+        "title": "Copy Plain Text",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.toggleEdit",
+        "title": "Toggle Edit",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.duplicate",
+        "title": "Duplicate",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.regenerate",
+        "title": "Regenerate",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.resend",
+        "title": "Resend",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.delete",
+        "title": "Delete",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.provider.open-panel",
+        "title": "Open Provider Panel"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "chat-view.editor",
+        "displayName": "Chat View",
+        "selector": [
+          {
+            "filenamePattern": "*.chat"
+          }
+        ]
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "chat-view.undo",
+        "key": "ctrl+z",
+        "mac": "cmd+z",
+        "when": "activeCustomEditorId == chat-view.editor && focusedView == ''"
+      },
+      {
+        "command": "chat-view.redo",
+        "key": "ctrl+y",
+        "mac": "cmd+shift+z",
+        "when": "activeCustomEditorId == chat-view.editor && focusedView == ''"
+      }
+    ],
+    "menus": {
+      "webview/context": [
+        {
+          "command": "chat-view.message.copy",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode'",
+          "group": "message_operations"
+        },
+        {
+          "command": "chat-view.message.toggleEdit",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode'",
+          "group": "message_operations"
+        },
+        {
+          "command": "chat-view.message.duplicate",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode'",
+          "group": "message_operations"
+        },
+        {
+          "command": "chat-view.message.regenerate",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole == 'assistant'",
+          "group": "message_operations"
+        },
+        {
+          "command": "chat-view.message.resend",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole == 'user'",
+          "group": "message_operations"
+        },
+        {
+          "command": "chat-view.message.delete",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode'",
+          "group": "message_operations_dangerous"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "yarn run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "yarn run compile-tests && yarn run compile && yarn run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.3",
+    "@types/node": "18.x",
+    "@types/vscode": "^1.84.0",
+    "@typescript-eslint/eslint-plugin": "^6.9.0",
+    "@typescript-eslint/parser": "^6.9.0",
+    "@vscode/test-electron": "^2.3.6",
+    "cheerio": "^1.0.0-rc.12",
+    "copy-webpack-plugin": "^12.0.2",
+    "eslint": "^8.52.0",
+    "glob": "^10.3.10",
+    "html-loader": "^4.2.0",
+    "mocha": "^10.2.0",
+    "ts-loader": "^9.5.0",
+    "typescript": "^5.2.2",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "@types/js-yaml": "^4.0.9"
+  }
+}
