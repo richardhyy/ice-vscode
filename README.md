@@ -2,6 +2,8 @@
 
 FlowChat is a flexible, easy-to-use VSCode extension that allows users to experiment with conversational AI using various large language models (LLMs). With FlowChat, you can easily chat with LLMs, manage conversation histories, and even create custom LLM integrations.
 
+![FlowChat Screenshot](screenshot.png)
+
 ## Features
 
 - Chat with built-in LLM providers (API keys required):
@@ -23,19 +25,11 @@ To use FlowChat with the built-in LLM providers, you'll need to provide your own
 
 ## Extension Settings
 
-FlowChat exposes the following configuration options:
-
-- `flowchat.openai.apiKey`: Your OpenAI API key
-- `flowchat.anthropic.apiKey`: Your Anthropic API key
-- `flowchat.poe.apiKey`: Your Poe API key
-
-You can also view the script for a built-in provider by clicking the provider name in the VSCode status bar, selecting "Configure", and then "Open Provider Script".
+You can view the script settings for a built-in provider by clicking the provider name in the VSCode status bar, selecting "Configure". Provider code can also be opened from this menu.
 
 ## Creating Custom Providers
 
 FlowChat supports custom LLM providers written in JavaScript. Provider scripts use a format similar to Tampermonkey to declare configuration entries. 
-
-_(Include example provider script if available)_
 
 ## Known Issues
 
