@@ -228,11 +228,37 @@ hr {
 }
 
 #conversation-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--padding);
+}
+
+.config-update-card {
+    background-color: rgba(82, 78, 76, 0.01);
+    border-top: 1px solid var(--shadow-color);
     padding: var(--padding);
+    font-size: 0.9em;
+    border-bottom: 1px solid var(--shadow-color);
+}
+
+.config-update-card .config-key {
+    color: var(--secondary-color);
+}
+
+.config-update-card .config-key::after {
+    content: ": ";
+    color: var(--primary-color);
+    margin-right: 1em;
+}
+
+.config-update-card .config-value {
+    color: var(--primary-color);
 }
 
 .message-container {
     box-sizing: border-box; /* Include padding and border in element's total width and height */
+    margin-left: var(--padding);
+    margin-right: var(--padding);
     cursor: initial;
     display: flex;
     flex-direction: row;
@@ -251,7 +277,11 @@ hr {
     animation: fadeInFromLeft 0.2s var(--default-cubic-bezier) forwards;
 }
 
-.message-container:not(:last-child) {
+.message-container:first-child {
+    margin-top: var(--padding);
+}
+
+.message-container:last-child {
     margin-bottom: var(--padding);
 }
 
