@@ -27,7 +27,7 @@ function debug(message) {
 let requests = {};
 
 process.on('message', (message) => {
-  const requestId = message.requestId;
+  const requestID = message.requestID;
   if (message.type === 'getCompletion') {
     const messageTrail = message.messageTrail;
     const config = message.config;
@@ -76,7 +76,7 @@ process.on('message', (message) => {
       if (data.object === 'error') {
         process.send({
           type: 'error',
-          requestId: requestId,
+          requestID: requestID,
           error: data.error.message
         });
       } else if (data.object === 'chat.completion') {
@@ -90,7 +90,7 @@ process.on('message', (message) => {
           const delta = data.choices[0].delta;
           process.send({
             type: 'stream',
-            requestId: requestId,
+            requestID: requestID,
             partialText: delta.content || ''
           });
           return delta.content || '';
@@ -99,7 +99,7 @@ process.on('message', (message) => {
         debug(`Unsupported object: ${data.object}\n`);
         process.send({
           type: 'error',
-          requestId: requestId,
+          requestID: requestID,
           error: `Unsupported object: ${data.object}`
         });
       }
@@ -140,19 +140,19 @@ process.on('message', (message) => {
         debug('Response ended\n');
         process.send({
           type: 'done',
-          requestId: requestId,
+          requestID: requestID,
           finalText: reponseText
         });
       });
     });
 
-    requests[requestId] = req;
+    requests[requestID] = req;
 
     req.on('error', (error) => {
       debug(`Request error: ${error.message}\n`);
       process.send({
         type: 'error',
-        requestId: requestId,
+        requestID: requestID,
         error: error.message
       });
     });
@@ -161,12 +161,12 @@ process.on('message', (message) => {
       debug('Request aborted\n');
       process.send({
         type: 'done',
-        requestId: requestId,
+        requestID: requestID,
         finalText: reponseText
       });
 
-      if (requests[requestId]) {
-        delete requests[requestId];
+      if (requests[requestID]) {
+        delete requests[requestID];
       }
     });
 
@@ -174,9 +174,9 @@ process.on('message', (message) => {
     req.end();
     
   } else if (message.type === 'cancel') {
-    if (requests[requestId]) {
-      requests[requestId].destroy();
-      delete requests[requestId];
+    if (requests[requestID]) {
+      requests[requestID].destroy();
+      delete requests[requestID];
     }
   } else {
     debug(`Unknown message type: ${message.type}\n`);

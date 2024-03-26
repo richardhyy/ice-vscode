@@ -48,20 +48,20 @@ export class ChatHistoryManager {
     this.enqueueAction(action, flush);
   }
 
-  public async editMessage(messageId: number, updates: Partial<ChatMessage>, flush: boolean = true): Promise<void> {
+  public async editMessage(messageID: number, updates: Partial<ChatMessage>, flush: boolean = true): Promise<void> {
     const action: ChatAction = {
       action: 'Edit',
-      id: messageId,
+      id: messageID,
       ...updates,
       timestamp: new Date().toISOString(),
     };
     this.enqueueAction(action, flush);
   }
 
-  public async deleteMessage(messageId: number, flush: boolean = true): Promise<void> {
+  public async deleteMessage(messageID: number, flush: boolean = true): Promise<void> {
     const action: ChatAction = {
       action: 'Delete',
-      id: messageId,
+      id: messageID,
       timestamp: new Date().toISOString(),
     };
     this.enqueueAction(action, flush);

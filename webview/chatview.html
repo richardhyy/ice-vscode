@@ -69,7 +69,7 @@
       );
 
       let flatMessages = {};
-      let messageIdWithChildren = {}; // {messageId: [childId1, childId2, ...]}
+      let messageIDWithChildren = {}; // {messageID: [childID1, childID2, ...]}
       let activePath = [];
       let currentProvider = null;
 
@@ -91,13 +91,13 @@
           }
         });
 
-        messageIdWithChildren = {};
+        messageIDWithChildren = {};
         Object.values(flatMessages).forEach((message) => {
           if (message.parentID) {
-            if (!messageIdWithChildren[message.parentID]) {
-              messageIdWithChildren[message.parentID] = [];
+            if (!messageIDWithChildren[message.parentID]) {
+              messageIDWithChildren[message.parentID] = [];
             }
-            messageIdWithChildren[message.parentID].push(message.id);
+            messageIDWithChildren[message.parentID].push(message.id);
           }
         });
       }
@@ -112,12 +112,12 @@
         }
 
         // Find the path from the message to the latest child
-        let children = messageIdWithChildren[messageID];
+        let children = messageIDWithChildren[messageID];
         while (children && children.length > 0) {
           // Pick the latest child to push to the path
           const latestChild = children[children.length - 1];
           path.push(latestChild);
-          children = messageIdWithChildren[latestChild];
+          children = messageIDWithChildren[latestChild];
         }
 
         return path;
@@ -155,7 +155,7 @@
           message.content = content;
           vscode.postMessage({
             type: "editMessage",
-            messageId: message.id,
+            messageID: message.id,
             updates: {
               content: content,
               provider: currentProvider,
@@ -168,7 +168,7 @@
         activePath = getPathWithMessage(message.id);
         renderConversation();
 
-        if (message.role === "user" && (!messageIdWithChildren[message.id] || messageIdWithChildren[message.id].length === 0)) {
+        if (message.role === "user" && (!messageIDWithChildren[message.id] || messageIDWithChildren[message.id].length === 0)) {
           // Send the message if it's a user message and has no children, i.e. it's the last message in the conversation
           sendMessage(message);
         }
@@ -208,7 +208,7 @@
             "edit-operation-button edit-operation-button-submit";
           submitButtonElement.innerHTML =
             message.role === "user" &&
-            (!messageIdWithChildren[message.id] || messageIdWithChildren[message.id].length === 0)
+            (!messageIDWithChildren[message.id] || messageIDWithChildren[message.id].length === 0)
               ? ICON_ARROW_RIGHT
               : ICON_CHECK;
           submitButtonElement.addEventListener("click", function () {
@@ -339,7 +339,7 @@
           if (message.role === "user") {
             shadowSiblingMessageContainer.classList.add("user");
           }
-          const siblings = messageIdWithChildren[message.parentID];
+          const siblings = messageIDWithChildren[message.parentID];
           if (siblings && siblings.length > 1) {
             for (const siblingID of siblings) {
               if (siblingID !== message.id) {
@@ -378,7 +378,7 @@
         messageNodesContainer.appendChild(messageNode);
 
         if (message.parentID) {
-          const siblings = messageIdWithChildren[message.parentID];
+          const siblings = messageIDWithChildren[message.parentID];
           if (siblings && siblings.length > 1) {
             // If there are siblings (i.e. more than 1 child of the same parent)
             const siblingSwitcher = document.createElement("div");
@@ -536,7 +536,7 @@
         renderConversation();
         vscode.postMessage({
           type: "deleteMessage",
-          messageId: messageID,
+          messageID: messageID,
         });
       }
 
@@ -668,7 +668,7 @@
             contextMenuOperation(message.operation);
             break;
           case "selectProvider":
-            currentProvider = message.providerId;
+            currentProvider = message.providerID;
             break;
           case "progress":
             setProgressIndicator(message.text, message.cancelableRequestID);
@@ -710,7 +710,7 @@
         currentProvider = providerID;
         vscode.postMessage({
           type: "selectProvider",
-          providerId: providerID,
+          providerID: providerID,
         });
       }
     </script>

@@ -16,7 +16,7 @@ export interface Provider {
   id: string;
   info: { [key: string]: string };
   getCompletion: (messageTrail: ChatMessage[], onStream: (partialText: string) => void, onCompletion: (finalText: string) => void) => Promise<string>;
-  requestCancel: (requestId: string) => void;
+  requestCancel: (requestID: string) => void;
 }
 
 function calculateProviderHash(providerCode: string, length: number): string {
@@ -27,7 +27,7 @@ function calculateProviderHash(providerCode: string, length: number): string {
   return shortHash;
 }
 
-function generateUniqueRequestId(): string {
+function generateUniqueRequestID(): string {
   return Math.random().toString(36).substring(2, 15);
 }
 
@@ -123,15 +123,15 @@ export class ProviderManager {
     };
   }
 
-  private getProviderId(providerPath: string, code: string, isBuiltIn: boolean): string {
+  private getProviderID(providerPath: string, code: string, isBuiltIn: boolean): string {
     return path.basename(providerPath, '.js') + '@' + (isBuiltIn ? 'built-in' : calculateProviderHash(code, 8));
   }
 
-  private getProviderPath(providerId: string): string {
-    if (providerId.endsWith('@built-in')) {
-      return path.join(__dirname, 'providers', providerId.slice(0, -'@built-in'.length) + '.js');
+  private getProviderPath(providerID: string): string {
+    if (providerID.endsWith('@built-in')) {
+      return path.join(__dirname, 'providers', providerID.slice(0, -'@built-in'.length) + '.js');
     } else {
-      return path.join(this.context.globalStorageUri.fsPath, 'providers', providerId.split('@')[0] + '.js');
+      return path.join(this.context.globalStorageUri.fsPath, 'providers', providerID.split('@')[0] + '.js');
     }
   }
 
@@ -151,27 +151,27 @@ export class ProviderManager {
 
       const providerPath = path.join(providersDir, file);
       const providerCode = fs.readFileSync(providerPath, 'utf8');
-      const providerId = this.getProviderId(providerPath, providerCode, isBuiltInProvider);
+      const providerID = this.getProviderID(providerPath, providerCode, isBuiltInProvider);
 
-      if (this.providers[providerId]) {
-        console.warn(`Provider already loaded: ${providerId}`);
+      if (this.providers[providerID]) {
+        console.warn(`Provider already loaded: ${providerID}`);
         continue;
       }
 
       const providerConfig = await this.parseProviderConfig(providerCode);
-      this.providers[providerId] = { config: providerConfig, child: undefined };
+      this.providers[providerID] = { config: providerConfig, child: undefined };
     }
   }
 
-  private async promptForProviderConfig(providerId: string, variableName: string, defaultValue: string | null, password: boolean): Promise<string | undefined> {
-    const providerEntry = this.providers[providerId];
+  private async promptForProviderConfig(providerID: string, variableName: string, defaultValue: string | null, password: boolean): Promise<string | undefined> {
+    const providerEntry = this.providers[providerID];
     if (!providerEntry) {
-      console.error(`Provider not found: ${providerId}`);
+      console.error(`Provider not found: ${providerID}`);
       return undefined;
     }
 
     return await vscode.window.showInputBox({ 
-      prompt: `Enter value for ${variableName}\n${defaultValue ? `Default: ${defaultValue}` : ''}\n(Provider ID: ${providerId})`,
+      prompt: `Enter value for ${variableName}\n${defaultValue ? `Default: ${defaultValue}` : ''}\n(Provider ID: ${providerID})`,
       value: defaultValue || '',
       password: password,
     });
@@ -186,24 +186,24 @@ export class ProviderManager {
     console.log('Providers:', this.providers);
   }
 
-  public async readProviderConfig(providerId: string): Promise<ProviderConfig> {
-    const providerEntry = this.providers[providerId];
+  public async readProviderConfig(providerID: string): Promise<ProviderConfig> {
+    const providerEntry = this.providers[providerID];
     if (!providerEntry) {
-      console.error(`Provider not found: ${providerId}`);
-      throw new Error(`Provider not found: ${providerId}`);
+      console.error(`Provider not found: ${providerID}`);
+      throw new Error(`Provider not found: ${providerID}`);
     }
 
     let config: ProviderConfig = providerEntry.config;
     if (!config) {
-      const providerPath = this.getProviderPath(providerId);
+      const providerPath = this.getProviderPath(providerID);
       if (fs.existsSync(providerPath)) {
         const providerCode = fs.readFileSync(providerPath, 'utf8');
         config = await this.parseProviderConfig(providerCode);
-        this.providers[providerId].config = config;
+        this.providers[providerID].config = config;
       }
     }
 
-    const keyPrefix = providerId.split('@')[0] + '.';
+    const keyPrefix = providerID.split('@')[0] + '.';
 
     // Load config values from the global state
     const globalState = this.context.globalState;
@@ -211,9 +211,9 @@ export class ProviderManager {
     for (const key in config.secureVariables) {
       const value = await this.context.secrets.get(keyPrefix + key);
       if (value === undefined) {
-        const inputValue = await this.promptForProviderConfig(providerId, key, config.secureVariables[key], true);
+        const inputValue = await this.promptForProviderConfig(providerID, key, config.secureVariables[key], true);
         if (inputValue === undefined) {
-          throw new Error(`Required secure variable ${key} not provided for provider ${providerId}`);
+          throw new Error(`Required secure variable ${key} not provided for provider ${providerID}`);
         }
         config.secureVariables[key] = inputValue;
         this.context.secrets.store(keyPrefix + key, inputValue);
@@ -228,9 +228,9 @@ export class ProviderManager {
         if (config.requiredVariables[key] !== null) { // Has a default value
           globalState.update(keyPrefix + key, config.requiredVariables[key]);
         } else {
-          const inputValue = await this.promptForProviderConfig(providerId, key, config.requiredVariables[key], false);
+          const inputValue = await this.promptForProviderConfig(providerID, key, config.requiredVariables[key], false);
           if (inputValue === undefined) {
-            throw new Error(`Required variable ${key} not provided for provider ${providerId}`);
+            throw new Error(`Required variable ${key} not provided for provider ${providerID}`);
           }
           config.requiredVariables[key] = inputValue;
           globalState.update(keyPrefix + key, inputValue);
@@ -246,7 +246,7 @@ export class ProviderManager {
         if (config.optionalVariables[key] !== null) { // Has a default value
           globalState.update(keyPrefix + key, config.optionalVariables[key]);
         } else {
-          const inputValue = await this.promptForProviderConfig(providerId, key, config.optionalVariables[key], false);
+          const inputValue = await this.promptForProviderConfig(providerID, key, config.optionalVariables[key], false);
           if (inputValue !== undefined) {
             config.optionalVariables[key] = inputValue;
             globalState.update(keyPrefix + key, inputValue);
@@ -260,14 +260,14 @@ export class ProviderManager {
     return config;
   }
 
-  private async initializeProvider(providerId: string, providerPath: string): Promise<void> {
-    if (this.providers[providerId] && this.providers[providerId].child) {
+  private async initializeProvider(providerID: string, providerPath: string): Promise<void> {
+    if (this.providers[providerID] && this.providers[providerID].child) {
       // Provider is already initialized or being initialized.
-      console.warn(`Provider ${providerId} is already initialized or being initialized`);
+      console.warn(`Provider ${providerID} is already initialized or being initialized`);
       return;
     }
 
-    console.log(`Initializing provider ${providerId} from ${providerPath}`);
+    console.log(`Initializing provider ${providerID} from ${providerPath}`);
 
     // Check if the provider script exists.
     if (!fs.existsSync(providerPath)) {
@@ -277,140 +277,140 @@ export class ProviderManager {
     }
 
     // Check variables
-    const config = await this.readProviderConfig(providerId);
-    this.providers[providerId].config = config;
+    const config = await this.readProviderConfig(providerID);
+    this.providers[providerID].config = config;
 
     const child = child_process.fork(providerPath, [], {
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
       env: {
         ...process.env,
-        FLOWCHAT_PROVIDER_ID: providerId,
+        FLOWCHAT_PROVIDER_ID: providerID,
         FLOWCHAT_PROVIDER_CONFIG: JSON.stringify(config),
       },
     });
     child.stdout?.on('data', (data) => {
-      console.log(`Provider ${providerId} stdout: ${data}`);
+      console.log(`Provider ${providerID} stdout: ${data}`);
     });
     child.stderr?.on('data', (data) => {
-      console.error(`Provider ${providerId} stderr: ${data}`);
-      vscode.window.showErrorMessage(`Provider ${providerId} Error: ${data}`);
+      console.error(`Provider ${providerID} stderr: ${data}`);
+      vscode.window.showErrorMessage(`Provider ${providerID} Error: ${data}`);
     });
-    this.providers[providerId].child = child;
+    this.providers[providerID].child = child;
 
     // Set up communication with the child process.
     child.on('message', (message: any) => {
       if (message.type === 'stream') {
-        const { requestId, partialText } = message;
-        const request = this.pendingRequests.get(requestId);
+        const { requestID, partialText } = message;
+        const request = this.pendingRequests.get(requestID);
         if (request) {
           request.onStream(partialText);
         }
       } else if (message.type === 'done') {
-        const { requestId, finalText } = message;
-        const request = this.pendingRequests.get(requestId);
+        const { requestID, finalText } = message;
+        const request = this.pendingRequests.get(requestID);
         if (request) {
           request.onCompletion(finalText);
-          this.pendingRequests.delete(requestId);
+          this.pendingRequests.delete(requestID);
         }
       } else if (message.type === 'error') {
-        const { requestId, error } = message;
-        const request = this.pendingRequests.get(requestId);
+        const { requestID, error } = message;
+        const request = this.pendingRequests.get(requestID);
         if (request) {
           request.onCompletion('');
-          this.pendingRequests.delete(requestId);
-          vscode.window.showErrorMessage(`Provider ${providerId} Error: ${error}`);
+          this.pendingRequests.delete(requestID);
+          vscode.window.showErrorMessage(`Provider ${providerID} Error: ${error}`);
         }
       } else if (message.type === 'debug') {
-        console.log(`Debug message from provider ${providerId}:`, message.content);
+        console.log(`Debug message from provider ${providerID}:`, message.content);
       }    
       // Handle other message types as needed.
     });
 
     child.on('error', (err) => {
-      console.error(`Provider ${providerId} error:`, err);
-      vscode.window.showErrorMessage(`Provider ${providerId} error: ${err}`);
+      console.error(`Provider ${providerID} error:`, err);
+      vscode.window.showErrorMessage(`Provider ${providerID} error: ${err}`);
     });
 
     child.on('exit', (code, signal) => {
-      console.log(`Provider ${providerId} exited with code ${code} and signal ${signal}`);
-      delete this.providers[providerId].child;
+      console.log(`Provider ${providerID} exited with code ${code} and signal ${signal}`);
+      delete this.providers[providerID].child;
     });
 
     // Send an initialization message if needed, or perform provider-specific setup.
-    child.send({ type: 'initialize', id: providerId });
+    child.send({ type: 'initialize', id: providerID });
   }
 
-  public async getProviderById(providerId: string): Promise<Provider | undefined> {
-    if (!this.providers[providerId]) {
-      console.warn(`Provider not found: ${providerId}`);
+  public async getProviderByID(providerID: string): Promise<Provider | undefined> {
+    if (!this.providers[providerID]) {
+      console.warn(`Provider not found: ${providerID}`);
       return undefined;
     }
 
-    const { config } = this.providers[providerId];
+    const { config } = this.providers[providerID];
 
     // Return a Provider interface that uses the existing or newly initialized child process.
     return {
-      id: providerId,
+      id: providerID,
       info: config.info,
       getCompletion: async (messageTrail: ChatMessage[], onStream: (partialText: string) => void, onCompletion: (finalText: string) => void) => {        
-        if (!this.providers[providerId].child) {
-          // Provider is not initialized. Assume providerId is the path to the script.
+        if (!this.providers[providerID].child) {
+          // Provider is not initialized. Assume providerID is the path to the script.
           let providerPath: string;
-          if (providerId.endsWith('@built-in')) {
+          if (providerID.endsWith('@built-in')) {
             // Built-in provider
-            providerPath = path.join(__dirname, 'providers', providerId.slice(0, -'@built-in'.length) + '.js');
+            providerPath = path.join(__dirname, 'providers', providerID.slice(0, -'@built-in'.length) + '.js');
           } else {
-            providerPath = path.join(this.context.globalStorageUri.fsPath, 'providers', providerId.split('@')[0] + '.js');
+            providerPath = path.join(this.context.globalStorageUri.fsPath, 'providers', providerID.split('@')[0] + '.js');
           }
-          await this.initializeProvider(providerId, providerPath);
+          await this.initializeProvider(providerID, providerPath);
         }
 
-        const { child } = this.providers[providerId];
+        const { child } = this.providers[providerID];
 
         if (!child) {
-          throw new Error(`Provider ${providerId} failed to initialize`);
+          throw new Error(`Provider ${providerID} failed to initialize`);
         }
 
-        const requestId = generateUniqueRequestId(); // Implement a function to generate a unique request ID
+        const requestID = generateUniqueRequestID(); // Implement a function to generate a unique request ID
       
-        this.pendingRequests.set(requestId, { onStream, onCompletion });
+        this.pendingRequests.set(requestID, { onStream, onCompletion });
       
-        child.send({ type: 'getCompletion', requestId, messageTrail, config });
+        child.send({ type: 'getCompletion', requestID, messageTrail, config });
 
-        return requestId;
+        return requestID;
       },
-      requestCancel: async (requestId: string) => {
-        const { child } = this.providers[providerId];
+      requestCancel: async (requestID: string) => {
+        const { child } = this.providers[providerID];
         if (child) {
-          child.send({ type: 'cancel', requestId });
+          child.send({ type: 'cancel', requestID });
         }
       }
     };
   }
 
-  public async getProviderIds(): Promise<string[]> {
+  public async getProviderIDs(): Promise<string[]> {
     // List all provider IDs, including built-in providers and those from the providers directory.
-    let providerIds = this.builtInProviders.map(provider => path.basename(provider, '.js') + '@built-in');
+    let providerIDs = this.builtInProviders.map(provider => path.basename(provider, '.js') + '@built-in');
 
     const providersDir = path.join(this.context.globalStorageUri.fsPath, 'providers');
     if (fs.existsSync(providersDir)) {
       const providerFiles = fs.readdirSync(providersDir).filter(file => file.endsWith('.js'));
-      providerIds = providerIds.concat(providerFiles.map(file => {
+      providerIDs = providerIDs.concat(providerFiles.map(file => {
         return path.basename(file, '.js') + '@' + calculateProviderHash(fs.readFileSync(path.join(providersDir, file), 'utf8'), 8);
       }));
     }
 
-    return providerIds;
+    return providerIDs;
   }
 
-  public async openProviderConfig(providerId: string): Promise<void> {
-    const providerEntry = this.providers[providerId];
+  public async openProviderConfig(providerID: string): Promise<void> {
+    const providerEntry = this.providers[providerID];
     if (!providerEntry) {
-      console.error(`Provider not found: ${providerId}`);
+      console.error(`Provider not found: ${providerID}`);
       return;
     }
   
-    const config = await this.readProviderConfig(providerId);
+    const config = await this.readProviderConfig(providerID);
   
     const configEntries = [
       ...Object.entries(config.secureVariables),
@@ -436,7 +436,7 @@ export class ProviderManager {
   
     if (selectedItem) {
       if (selectedItem.label === 'Open Provider Script') {
-        await this.openProviderScript(providerId);
+        await this.openProviderScript(providerID);
       } else {
         const [key, oldValue] = configEntries.find(([k]) => k === selectedItem.label)!;
         const isSecure = key in config.secureVariables;
@@ -450,21 +450,21 @@ export class ProviderManager {
         if (newValue !== undefined) {
           if (isSecure) {
             config.secureVariables[key] = newValue;
-            await this.context.secrets.store(providerId.split('@')[0] + '.' + key, newValue);
+            await this.context.secrets.store(providerID.split('@')[0] + '.' + key, newValue);
           } else if (key in config.requiredVariables) {
             config.requiredVariables[key] = newValue;
-            await this.context.globalState.update(providerId.split('@')[0] + '.' + key, newValue);
+            await this.context.globalState.update(providerID.split('@')[0] + '.' + key, newValue);
           } else if (key in config.optionalVariables) {
             config.optionalVariables[key] = newValue;
-            await this.context.globalState.update(providerId.split('@')[0] + '.' + key, newValue);
+            await this.context.globalState.update(providerID.split('@')[0] + '.' + key, newValue);
           }
         }
       }
     }
   }
 
-  public async openProviderScript(providerId: string): Promise<void> {
-    const providerPath = this.getProviderPath(providerId);
+  public async openProviderScript(providerID: string): Promise<void> {
+    const providerPath = this.getProviderPath(providerID);
     if (fs.existsSync(providerPath)) {
       const doc = await vscode.workspace.openTextDocument(providerPath);
       await vscode.window.showTextDocument(doc);

@@ -113,14 +113,14 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
   }
 
   async showProviderPicker() {
-    const providers = await this.providerManager.getProviderIds();
+    const providers = await this.providerManager.getProviderIDs();
     const providerItems: ProviderQuickPickerItem[] = await Promise.all(
-      providers.map(async (providerId) => {
-        const provider = await this.providerManager.getProviderById(providerId);
+      providers.map(async (providerID) => {
+        const provider = await this.providerManager.getProviderByID(providerID);
         if (provider) {
           return new ProviderQuickPickerItem(provider.info['name'] || provider.id, provider.info['description'] || '', provider.id, provider);
         }
-        return new ProviderQuickPickerItem(providerId, 'Provider not found', providerId, undefined);
+        return new ProviderQuickPickerItem(providerID, 'Provider not found', providerID, undefined);
       })
     );
   
@@ -162,7 +162,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             this.currentProvider = selectedProvider.provider;
             const label = this.currentProvider.info['name'] || this.currentProvider.id;
             updateProviderStatusBar(label);
-            postMessageToCurrentWebview({ type: 'selectProvider', providerId: this.currentProvider.id });
+            postMessageToCurrentWebview({ type: 'selectProvider', providerID: this.currentProvider.id });
           }
         } else if (selectedItem.label === openCustomProviderFolderLabel) {
           vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(customProviderFolder));
@@ -233,7 +233,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             }
           }
 
-          const provider = await this.providerManager.getProviderById(latestMessage.provider);
+          const provider = await this.providerManager.getProviderByID(latestMessage.provider);
 
           if (!provider) {
             vscode.window.showErrorMessage(`Provider ${latestMessage.provider} not found. Please select a different provider.`);
@@ -259,14 +259,14 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           if (provider) {
             try {
               providerExecuting = provider;
-              const requestId = await provider.getCompletion(
+              const requestID = await provider.getCompletion(
                 messageTrail,
                 (partialText: string) => {
                   // Streaming message from provider
                   console.log('stream', partialText);
                   newMessage.content += partialText;
                   webviewPanel.webview.postMessage({ type: 'updateMessage', message: newMessage, incomplete: true });
-                  webviewPanel.webview.postMessage({ type: 'progress', text: 'Text Completion in Progress', cancelableRequestID: requestId });
+                  webviewPanel.webview.postMessage({ type: 'progress', text: 'Text Completion in Progress', cancelableRequestID: requestID });
                 },
                 async (finalText: string) => {
                   // Streaming completed
@@ -283,7 +283,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
                   providerExecuting = null;
                 }
               );
-              webviewPanel.webview.postMessage({ type: 'progress', text: 'Waiting for Response', cancelableRequestID: requestId });
+              webviewPanel.webview.postMessage({ type: 'progress', text: 'Waiting for Response', cancelableRequestID: requestID });
             } catch (e: any) {
               webviewPanel.webview.postMessage({ type: 'error', error: e.message });
               webviewPanel.webview.postMessage({ type: 'progress', text: undefined });
@@ -292,23 +292,23 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
 
           break;
         case 'editMessage':
-          await chatHistoryManager.editMessage(message.messageId, message.updates);
+          await chatHistoryManager.editMessage(message.messageID, message.updates);
           break;
         case 'deleteMessage':
-          await chatHistoryManager.deleteMessage(message.messageId);
+          await chatHistoryManager.deleteMessage(message.messageID);
           break;
         case 'updateConfig':
           await chatHistoryManager.updateConfig(message.config);
           break;
         case 'selectProvider':
           let providerDisplay: Provider | undefined;
-          if (message.providerId) {
-            providerDisplay = await this.providerManager.getProviderById(message.providerId);
+          if (message.providerID) {
+            providerDisplay = await this.providerManager.getProviderByID(message.providerID);
             if (providerDisplay) {
               updateProviderStatusBar(providerDisplay.info['name'] || providerDisplay.id);
               this.currentProvider = providerDisplay;
             } else {
-              updateProviderStatusBar(message.providerId, 'Provider not found');
+              updateProviderStatusBar(message.providerID, 'Provider not found');
               this.currentProvider = null;
             }
           } else {
