@@ -40,7 +40,7 @@ process.on('message', (message) => {
 
     query.push({
       role: 'system',
-      content: config.requiredVariables.SystemPrompt,
+      content: config.SystemPrompt,
       content_type: 'text/markdown',
       timestamp: 0,
       message_id: '',
@@ -55,8 +55,8 @@ process.on('message', (message) => {
       message_id: '',
       version: '1.0',
       type: 'query',
-      temperature: parseFloat(config.optionalVariables.Temperature || '0.7'),
-      logit_bias: JSON.parse(config.optionalVariables.LogitBias || '{}'),
+      temperature: parseFloat(config.Temperature || '0.7'),
+      logit_bias: JSON.parse(config.LogitBias || '{}'),
     });
 
     debug(`Request body: ${requestBody}\n`);
@@ -64,11 +64,11 @@ process.on('message', (message) => {
     const options = {
       hostname: 'api.poe.com',
       port: 443,
-      path: `/bot/${config.requiredVariables.Model}`,
+      path: `/bot/${config.Model}`,
       method: 'POST',
       headers: {
         'Accept': 'application/json',
-        'Authorization': `Bearer ${config.secureVariables.APIKey}`,
+        'Authorization': `Bearer ${config.APIKey}`,
       },
     };
 

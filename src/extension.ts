@@ -221,22 +221,19 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           await chatHistoryManager.addMessage(message.message);
           break;
         case 'sendMessage':
-          const messageTrail: [ChatMessage] = message.messageTrail;
+          const configOverride = message.config;
+          const providerID = configOverride?.Provider || this.currentProvider?.id;
+          const messageTrail: [ChatMessage] = message.messageTrail.filter((m: ChatMessage) => !m.role.startsWith('#'));
           const latestMessage = messageTrail[messageTrail.length - 1];
 
-          if (latestMessage.provider === undefined) {
-            if (this.currentProvider) {
-              latestMessage.provider = this.currentProvider.id;
-            } else {
-              vscode.window.showErrorMessage('No provider selected');
-              break;
-            }
+          if (providerID === undefined) {
+            vscode.window.showErrorMessage('Please select a provider before sending a message.');
           }
 
-          const provider = await this.providerManager.getProviderByID(latestMessage.provider);
+          const provider = await this.providerManager.getProviderByID(providerID);
 
           if (!provider) {
-            vscode.window.showErrorMessage(`Provider ${latestMessage.provider} not found. Please select a different provider.`);
+            vscode.window.showErrorMessage(`Provider ${providerID} not found. Please select a different provider.`);
             break;
           }
 
@@ -246,7 +243,6 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             id: Date.now() + Math.floor(Math.random() * 1000),
             role: 'assistant',
             content: '',
-            provider: provider?.id || '',
             parentID: latestMessage.id,
             timestamp: new Date().toISOString(),
           };
@@ -261,6 +257,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
               providerExecuting = provider;
               const requestID = await provider.getCompletion(
                 messageTrail,
+                configOverride,
                 (partialText: string) => {
                   // Streaming message from provider
                   console.log('stream', partialText);
@@ -296,9 +293,6 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           break;
         case 'deleteMessage':
           await chatHistoryManager.deleteMessage(message.messageID);
-          break;
-        case 'updateConfig':
-          await chatHistoryManager.updateConfig(message.config);
           break;
         case 'selectProvider':
           let providerDisplay: Provider | undefined;
@@ -350,6 +344,18 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             await providerExecuting.requestCancel(message.requestID);
             providerExecuting = null;
           }
+          break;
+        case 'fetchProviderIDs':
+          const providerIDs = await this.providerManager.getProviderIDs();
+          webviewPanel.webview.postMessage({ type: 'providerIDs', providerIDs: providerIDs });
+          break;
+        case 'fetchProviderConfig':
+          const providerEntity = await this.providerManager.getProviderByID(message.providerID);
+          if (!providerEntity) {
+            vscode.window.showErrorMessage(`Provider ${message.providerID} not found.`);
+            break;
+          }
+          webviewPanel.webview.postMessage({ type: 'providerConfig', providerID: message.providerID, configKeys: providerEntity.configKeys });
           break;
       }
     });

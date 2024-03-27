@@ -15,7 +15,14 @@ export interface ProviderConfig {
 export interface Provider {
   id: string;
   info: { [key: string]: string };
-  getCompletion: (messageTrail: ChatMessage[], onStream: (partialText: string) => void, onCompletion: (finalText: string) => void) => Promise<string>;
+  configKeys: {
+    secureVariables: string[],
+    requiredVariables: string[],
+    optionalVariables: string[],
+  };
+  getCompletion: (messageTrail: ChatMessage[], configOverride: { [key: string]: string }, 
+                  onStream: (partialText: string) => void, onCompletion: (finalText: string) => void) 
+                  => Promise<string>;
   requestCancel: (requestID: string) => void;
 }
 
@@ -352,7 +359,13 @@ export class ProviderManager {
     return {
       id: providerID,
       info: config.info,
-      getCompletion: async (messageTrail: ChatMessage[], onStream: (partialText: string) => void, onCompletion: (finalText: string) => void) => {        
+      configKeys: {
+        secureVariables: Object.keys(config.secureVariables),
+        requiredVariables: Object.keys(config.requiredVariables),
+        optionalVariables: Object.keys(config.optionalVariables),
+      },
+      getCompletion: async (messageTrail: ChatMessage[], configOverride: { [key: string]: string },
+                            onStream: (partialText: string) => void, onCompletion: (finalText: string) => void) => {        
         if (!this.providers[providerID].child) {
           // Provider is not initialized. Assume providerID is the path to the script.
           let providerPath: string;
@@ -374,8 +387,11 @@ export class ProviderManager {
         const requestID = generateUniqueRequestID(); // Implement a function to generate a unique request ID
       
         this.pendingRequests.set(requestID, { onStream, onCompletion });
+
+        // Merge the config with the override
+        let mergedConfig = { ...config.secureVariables, ...config.requiredVariables, ...config.optionalVariables, ...configOverride };
       
-        child.send({ type: 'getCompletion', requestID, messageTrail, config });
+        child.send({ type: 'getCompletion', requestID, messageTrail, config: mergedConfig });
 
         return requestID;
       },

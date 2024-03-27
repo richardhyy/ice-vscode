@@ -233,48 +233,97 @@ hr {
     gap: var(--padding);
 }
 
-.config-update-card {
+.message-container {
+    cursor: initial;
+}
+
+.message-container.card {
     background-color: rgba(82, 78, 76, 0.01);
     border-top: 1px solid var(--shadow-color);
     padding: var(--padding);
-    font-size: 0.9em;
     border-bottom: 1px solid var(--shadow-color);
 }
 
-.config-update-card .config-key {
+.message-container.card .operation-bar {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5em;
+}
+
+.message-container.card .validity-check {
+    color: var(--secondary-color);
+    font-size: var(--fs-footnote);
+    font-style: italic;
+}
+
+.message-container.card .button-container {
+    display: flex;
+    flex-direction: row-reverse;
+    gap: 1em;
+    margin-top: 0.5em;
+}
+
+.message-container.card .button-container .button {
+    background-color: var(--secondary-color);
+    color: var(--edit-operation-color);
+    border: none;
+    font-size: var(--fs-footnote);
+    padding: 0.5em 1em;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: all 0.2s var(--default-cubic-bezier);
+}
+
+.message-container.card .button-container .button.primary {
+    background-color: var(--accent-color);
+}
+
+.message-container.card .button-container .button:hover {
+    filter: brightness(90%);
+}
+
+.message-container.card .button-container .button:active {
+    filter: brightness(80%);
+}
+
+.config-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+}
+
+.config-content .config-row {
+    display: flex;
+    flex-direction: row;
+    align-items: start;
+    gap: 1em;
+}
+
+.config-content .config-key {
     color: var(--secondary-color);
 }
 
-.config-update-card .config-key::after {
+.config-content .config-key::after {
     content: ": ";
     color: var(--primary-color);
-    margin-right: 1em;
 }
 
-.config-update-card .config-value {
+.config-content .config-value {
     color: var(--primary-color);
 }
 
-.message-container {
+.message-container.bubble {
     box-sizing: border-box; /* Include padding and border in element's total width and height */
     margin-left: var(--padding);
     margin-right: var(--padding);
-    cursor: initial;
     display: flex;
     flex-direction: row;
     align-items: center;
     gap: var(--padding);
     opacity: 0;
     transform: translateX(-100%);
-}
-
-.message-container.static {
-    opacity: 1 !important;
-    transform: translateX(0) !important;
-}
-
-.message-container.animated {
-    animation: fadeInFromLeft 0.2s var(--default-cubic-bezier) forwards;
 }
 
 .message-container:first-child {
@@ -291,8 +340,21 @@ hr {
     transform: translateX(100%);
 }
 
+.message-container.static {
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+}
+
+.message-container.bubble.animated {
+    animation: fadeInFromLeft 0.2s var(--default-cubic-bezier) forwards;
+}
+
 .message-container.user.animated {
     animation: fadeInFromRight 0.2s var(--default-cubic-bezier) forwards;
+}
+
+.message-container.card.animated {
+    animation: fadeIn 0.2s var(--default-cubic-bezier) forwards;
 }
 
 .message-container.user > .message-nodes-container {
@@ -368,7 +430,7 @@ hr {
     user-select: text;
 }
 
-.message-content textarea {
+.message-container textarea {
     background-color: transparent;
     border: none;
     resize: none;
@@ -382,6 +444,10 @@ hr {
     color: var(--dark-gray);
     outline: none;
     vertical-align: middle;
+}
+
+.message-container.card textarea {
+    width: 100%;
 }
 
 .message-content-editing {

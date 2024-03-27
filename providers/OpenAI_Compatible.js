@@ -39,22 +39,22 @@ process.on('message', (message) => {
 
     messages.push({
       role: 'system',
-      content: config.requiredVariables.SystemPrompt,
+      content: config.SystemPrompt,
     });
 
     const requestBody = JSON.stringify({
-      model: config.requiredVariables.Model,
+      model: config.Model,
       messages: messages,
-      max_tokens: parseInt(config.requiredVariables.MaxTokensToSample),
+      max_tokens: parseInt(config.MaxTokensToSample),
       stream: true,
-      temperature: parseFloat(config.optionalVariables.Temperature || '0.7'),
-      logit_bias: JSON.parse(config.optionalVariables.LogitBias || '{}'),
+      temperature: parseFloat(config.Temperature || '0.7'),
+      logit_bias: JSON.parse(config.LogitBias || '{}'),
     });
 
     debug(`Request body: ${requestBody}\n`);
 
-    const hostname = config.requiredVariables.APIHost;
-    const path = config.requiredVariables.APIPath;
+    const hostname = config.APIHost;
+    const path = config.APIPath;
 
     const options = {
       hostname: hostname,
@@ -63,8 +63,8 @@ process.on('message', (message) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.secureVariables.APIKey}`,
-        ...JSON.parse(config.optionalVariables.AdditionalHeaders || '{}'),
+        'Authorization': `Bearer ${config.APIKey}`,
+        ...JSON.parse(config.AdditionalHeaders || '{}'),
       },
     };
 

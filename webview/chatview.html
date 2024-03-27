@@ -61,6 +61,7 @@
 
     <script>
       const vscode = acquireVsCodeApi();
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
       const messageInput = document.getElementById("message-input");
       const sendButton = document.getElementById("send-button");
@@ -100,6 +101,23 @@
             messageIDWithChildren[message.parentID].push(message.id);
           }
         });
+      }
+
+      /**
+       * Get the configuration for a message
+       * This traverses the message tree to build the configuration until the target message
+       * @param {numeric} Target message ID
+       * @returns {object} The configuration object
+       */
+      function getMessageConfig(messageID) {
+        let config = {};
+        for (const id of activePath) {
+          const currentMessage = flatMessages[id];
+          if (currentMessage.role === "#config") {
+            config = { ...config, ...JSON.parse(currentMessage.content) };
+          }
+        }
+        return config;
       }
 
       function getPathWithMessage(messageID) {
@@ -145,7 +163,6 @@
             id: Date.now(),
             role: "user",
             content,
-            provider: currentProvider,
             parentID: message.parentID,
             timestamp: new Date().toISOString(),
           };
@@ -158,7 +175,6 @@
             messageID: message.id,
             updates: {
               content: content,
-              provider: currentProvider,
             }
           });
         }
@@ -178,14 +194,75 @@
         return DOMPurify.sanitize(marked.parse(content, { "breaks": singleBreakForNewLine }));
       }
 
-      function createMessageNode(message, clipContent = false, editing = false) {
-        const messageNode = document.createElement("div");
-        messageNode.classList.add("message-node");
-        messageNode.dataset.id = message.id;
-        messageNode.dataset.vscodeContext = JSON.stringify({ webviewSection: "messageNode", messageRole: message.role });
-        
-        //`{"webviewSection": "messageNode"}`;
+      function _encodeConfig(obj) {
+        let lines = [];
+        for (let key in obj) {
+          if (obj.hasOwnProperty(key)) {
+            let value = obj[key];
+            if (typeof value === 'string') {
+              lines.push(key + ' = ' + value.replace(/\n/g, '\n '));
+            } else {
+              lines.push(key + ' = ' + value);
+            }
+            lines.push('');
+          }
+        }
+        return lines.join('\n').trim();
+      }
 
+      function _decodeConfig(str) {
+        let obj = {};
+        let lines = str.split('\n');
+        let currentKey = null;
+        let currentValue = null;
+        
+        for (let line of lines) {
+          line = line.trim();
+          if (line === '' || line.startsWith('#')) {
+            continue;
+          }
+          
+          let equalsIndex = line.indexOf('=');
+          if (equalsIndex !== -1) {
+            if (currentKey !== null) {
+              obj[currentKey] = currentValue.trim();
+            }
+            currentKey = line.slice(0, equalsIndex).trim();
+            currentValue = line.slice(equalsIndex + 1).trim() + '\n';
+          } else {
+            currentValue += line + '\n';
+          }
+        }
+        
+        if (currentKey !== null) {
+          obj[currentKey] = currentValue.trim();
+        }
+        
+        return obj;
+      }
+
+      function _textareaCheckAndHandleUndoRedo(event) {
+        if (isMac) {
+          if (event.metaKey && event.key === 'z') {
+            event.preventDefault();
+            if (event.shiftKey) {
+              document.execCommand('redo');
+            } else {
+              document.execCommand('undo');
+            }
+          }
+        } else {
+          if (event.ctrlKey && event.key === 'z') {
+            event.preventDefault();
+            document.execCommand('undo');
+          } else if (event.ctrlKey && event.key === 'y') {
+            event.preventDefault();
+            document.execCommand('redo');
+          }
+        }
+      }
+
+      function _renderBubbleMessage(messageNode, message, clipContent, editing) {
         if (editing) {
           const cancelButtonElement = document.createElement("button");
           cancelButtonElement.className =
@@ -219,9 +296,7 @@
             );
           });
           messageNode.appendChild(submitButtonElement);
-        }
-
-        if (editing) {
+          
           messageContent.classList.add("message-content-editing");
 
           const inputElement = document.createElement("textarea");
@@ -237,26 +312,7 @@
               event.preventDefault();
               _handleMessageSubmit(event.target.value, message);
             } else {
-              const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-
-              if (isMac) {
-                if (event.metaKey && event.key === 'z') {
-                  event.preventDefault();
-                  if (event.shiftKey) {
-                    document.execCommand('redo');
-                  } else {
-                    document.execCommand('undo');
-                  }
-                }
-              } else {
-                if (event.ctrlKey && event.key === 'z') {
-                  event.preventDefault();
-                  document.execCommand('undo');
-                } else if (event.ctrlKey && event.key === 'y') {
-                  event.preventDefault();
-                  document.execCommand('redo');
-                }
-              }
+              _textareaCheckAndHandleUndoRedo(event);
             }
           });
           inputElement.addEventListener("input", function (event) {
@@ -292,7 +348,7 @@
           });
 
           messageContent.append(inputElement);
-        } else {
+        } else {  // Not editing
           const renderedContent = _renderMarkdown(message.content + (message.incomplete && message.content.length === 0 ? "..." : ""), message.role === "user");
           if (clipContent) {
             const clippedContent = document.createElement("div");
@@ -326,6 +382,135 @@
               codeBlock.appendChild(copyButton);
             }
           }
+        }
+      }
+
+      function _checkConfig(content) {
+        const config = _decodeConfig(content);
+        if (Object.keys(config).length === 0) {
+          return "Config is empty";
+        } else {
+          return null;
+        }
+      }
+
+      function _renderConfigNode(messageNode, message, clipContent, editing) {
+        const contentContainer = document.createElement("div");
+        contentContainer.classList.add("config-content");
+        messageNode.appendChild(contentContainer);
+
+        if (editing) {
+          const validityCheckElement = document.createElement("div");
+          validityCheckElement.classList.add("validity-check");
+
+          const inputElement = document.createElement("textarea");
+          inputElement.dataset.id = message.id;
+          inputElement.value = _encodeConfig(JSON.parse(message.content));
+          inputElement.spellcheck = true;
+          inputElement.addEventListener("keydown", function (event) {
+            if (event.key === "Enter" && event.metaKey) {
+              event.preventDefault();
+              _handleMessageSubmit(
+                JSON.stringify(_decodeConfig(event.target.value)),
+                message
+              );
+            } else {
+              _textareaCheckAndHandleUndoRedo(event);
+            }
+          });
+          inputElement.addEventListener("input", function (event) {
+            auto_grow(event.target);
+
+            const warning = _checkConfig(event.target.value);
+            if (warning) {
+              validityCheckElement.textContent = warning;
+            } else {
+              validityCheckElement.textContent = "";
+            }
+          });
+          inputElement.addEventListener("focus", function (event) {
+            auto_grow(event.target);
+            globalUndoLock = message.id;
+          });
+          inputElement.addEventListener("blur", function (event) {
+            if (globalUndoLock === message.id) {
+              globalUndoLock = null;
+            }
+          });
+          contentContainer.appendChild(inputElement);
+
+          // Error message
+          const operationBar = document.createElement("div");
+          operationBar.classList.add("operation-bar");
+          messageNode.appendChild(operationBar);
+
+          operationBar.appendChild(validityCheckElement);
+
+          // Buttons
+          const buttonContainer = document.createElement("div");
+          buttonContainer.classList.add("button-container");
+          operationBar.appendChild(buttonContainer);
+
+          const cancelButtonElement = document.createElement("button");
+          cancelButtonElement.className = "button";
+          cancelButtonElement.textContent = "Cancel";
+
+          cancelButtonElement.addEventListener("click", function () {
+            // Cancel editing
+            messageNode.replaceWith(createMessageNode(message, false, false));
+          });
+
+          const saveButtonElement = document.createElement("button");
+          saveButtonElement.className = "button primary";
+          saveButtonElement.textContent = "Done";
+
+          saveButtonElement.addEventListener("click", function () {
+            // Submit editing
+            _handleMessageSubmit(
+              JSON.stringify(_decodeConfig(inputElement.value)),
+              message
+            );
+          });
+
+          if (isMac) {
+            buttonContainer.appendChild(saveButtonElement);
+            buttonContainer.appendChild(cancelButtonElement);
+          } else {
+            buttonContainer.appendChild(cancelButtonElement);
+            buttonContainer.appendChild(saveButtonElement);
+          }
+        } else {
+          const config = JSON.parse(message.content);
+          for (let key in config) {
+            const rowElement = document.createElement("div");
+            rowElement.classList.add("config-row");
+
+            const keyElement = document.createElement("span");
+            keyElement.classList.add("config-key");
+            keyElement.textContent = key;
+            rowElement.appendChild(keyElement);
+
+            const valueElement = document.createElement("span");
+            valueElement.classList.add("config-value");
+            valueElement.innerHTML = _renderMarkdown(config[key], true);
+            rowElement.appendChild(valueElement);
+
+            contentContainer.appendChild(rowElement);
+          }
+        }
+      }
+
+      function createMessageNode(message, clipContent = false, editing = false) {
+        const messageNode = document.createElement("div");
+        const isConfig = message.role === "#config";
+        messageNode.classList.add(isConfig ? "config-card-content" : "message-node");
+        messageNode.dataset.id = message.id;
+        messageNode.dataset.vscodeContext = JSON.stringify({ webviewSection: "messageNode", messageRole: message.role });
+
+        if (isConfig) {
+          _renderConfigNode(messageNode, message, clipContent, editing);
+        } else {
+          _renderBubbleMessage(messageNode, message, clipContent, editing);
         }
 
         return messageNode;
@@ -362,6 +547,7 @@
       function createMessageContainer(message, editing = false, shouldAnimate = false) {
         const messageContainer = document.createElement("div");
         messageContainer.classList.add("message-container");
+        messageContainer.classList.add(message.role === "user" || message.role === "assistant" ? "bubble" : "card");
         messageContainer.classList.add(message.role);
         messageContainer.dataset.id = message.id;
         const messageNodesContainer = document.createElement("div");
@@ -427,7 +613,6 @@
           isShadow: true,
           role: "user",
           content: "",
-          provider: currentProvider,
           parentID: parentMessageID,
           timestamp: new Date().toISOString(),
         };
@@ -465,7 +650,7 @@
 
       function focusMessageInput(messageID) {
         const messageNode = document.querySelector(
-          `.message-node[data-id="${messageID}"]`
+          `.message-container[data-id="${messageID}"]`
         );
         if (messageNode) {
           const inputElement = messageNode.querySelector("textarea");
@@ -495,10 +680,62 @@
         const lastMessage = getLastMessage();
         if (lastMessage) {
           activePath = getPathWithMessage(lastMessage.id);
-          selectProvider(lastMessage.provider);
+
+          // Update provider
+          const config = getMessageConfig(lastMessage.id);
+          selectProvider(config.Provider);
         }
         renderConversation();
         console.log("activePath", activePath);
+      }
+
+      function handleUpdateConfig(config) {
+        const lastMessage = getLastMessage();
+        if (lastMessage && lastMessage.role === "#config") { // If the last message is a config
+          // Check if there are any changes
+          const lastConfig = JSON.parse(lastMessage.content);
+          let changed = false;
+          for (let key in config) {
+            if (config[key] !== lastConfig[key]) {
+              changed = true;
+              break;
+            }
+          }
+
+          let newConfig = JSON.stringify({ ...lastConfig, ...config });
+
+          if (changed) {
+            vscode.postMessage({
+              type: "editMessage",
+              messageID: lastMessage.id,
+              updates: {
+                content: newConfig,
+              },
+            });
+          } else {
+            return;
+          }
+
+          // Update the flat messages
+          lastMessage.content = newConfig;
+          updateFlatMessages(lastMessage);
+          scanMessageTree();
+          rerenderMessage(lastMessage.id);
+        } else { // Create a new config message
+          const configMessage = {
+            id: Date.now(),
+            role: "#config",
+            content: JSON.stringify(config),
+            parentID: lastMessage.id,
+            timestamp: new Date().toISOString(),
+          };
+          addMessage(configMessage);
+
+          updateFlatMessages(configMessage);
+          scanMessageTree();
+          activePath = getPathWithMessage(configMessage.id);
+          renderConversation();
+        }
       }
 
       function getLastMessage() {
@@ -541,13 +778,14 @@
       }
 
       function toggleEdit(messageID) {
-        const messageNode = document.querySelector(
-          `.message-node[data-id="${messageID}"]`
+        const messageContainer = document.querySelector(
+          `.message-container[data-id="${messageID}"]`
         );
         const message = flatMessages[messageID];
-        const messageContent = messageNode.querySelector(".message-content");
+        // Get first child of the message node
+        const messageNode = messageContainer.children[0];
         const messageContentEditing = createMessageNode(message, false, true);
-        messageContent.replaceWith(messageContentEditing);
+        messageNode.replaceWith(messageContentEditing);
 
         focusMessageInput(messageID);
       }
@@ -589,7 +827,7 @@
 
         let messageID;
         for (const element of cursorHoverElements) {
-          if (element.classList.contains("message-node")) {
+          if (element.classList.contains("message-container") || element.classList.contains("message-node")) {
             messageID = element.dataset.id;
             break;
           }
@@ -669,6 +907,9 @@
             break;
           case "selectProvider":
             currentProvider = message.providerID;
+            handleUpdateConfig({
+              Provider: currentProvider
+            });
             break;
           case "progress":
             setProgressIndicator(message.text, message.cancelableRequestID);
@@ -693,8 +934,10 @@
         const fullPath = getPathWithMessage(leafMessage.id);
         const leafMessageIndex = fullPath.indexOf(leafMessage.id);
         const path = fullPath.slice(0, leafMessageIndex + 1);
+        const config = getMessageConfig(leafMessage.id)
         vscode.postMessage({
           type: "sendMessage",
+          config: config,
           messageTrail: path.map((id) => flatMessages[id]),
         });
       }

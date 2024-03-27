@@ -5,16 +5,11 @@ import { UndoRedoManager } from './undoRedoManager';
 
 export interface ChatMessage {
   id: number;
-  role: string;
+  role: 'user' | 'assistant' | '#config' | string;
   content: string;
-  provider: string;
   customFields?: Record<string, any>;
   parentID: number | null;
   timestamp: string;
-}
-
-export interface ChatConfig {
-  [key: string]: any;
 }
 
 export interface ChatAction {
@@ -62,15 +57,6 @@ export class ChatHistoryManager {
     const action: ChatAction = {
       action: 'Delete',
       id: messageID,
-      timestamp: new Date().toISOString(),
-    };
-    this.enqueueAction(action, flush);
-  }
-
-  public async updateConfig(config: ChatConfig, flush: boolean = true): Promise<void> {
-    const action: ChatAction = {
-      action: 'ConfigUpdate',
-      config,
       timestamp: new Date().toISOString(),
     };
     this.enqueueAction(action, flush);

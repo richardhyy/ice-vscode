@@ -38,12 +38,12 @@ process.on('message', (message) => {
     }));
 
     const requestBody = JSON.stringify({
-      model: config.requiredVariables.Model,
+      model: config.Model,
       messages: messages,
-      max_tokens: parseInt(config.requiredVariables.MaxTokensToSample),
+      max_tokens: parseInt(config.MaxTokensToSample),
       stream: true,
-      system: config.requiredVariables.SystemPrompt,
-      temperature: parseFloat(config.optionalVariables.Temperature || '0'),
+      system: config.SystemPrompt,
+      temperature: parseFloat(config.Temperature || '0'),
     });
 
     debug(`Request body: ${requestBody}\n`);
@@ -56,8 +56,8 @@ process.on('message', (message) => {
       headers: {
         'Content-Type': 'application/json',
         'anthropic-version': '2023-06-01',
-        'x-api-key': config.secureVariables.APIKey,
-        ...JSON.parse(config.optionalVariables.AdditionalHeaders || '{}'),
+        'x-api-key': config.APIKey,
+        ...JSON.parse(config.AdditionalHeaders || '{}'),
       },
     };
 
