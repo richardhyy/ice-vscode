@@ -238,10 +238,7 @@ hr {
 }
 
 .message-container.card {
-    background-color: rgba(82, 78, 76, 0.01);
-    border-top: 1px solid var(--shadow-color);
-    padding: var(--padding);
-    border-bottom: 1px solid var(--shadow-color);
+
 }
 
 .message-container.card .operation-bar {
@@ -289,9 +286,15 @@ hr {
 }
 
 .config-content {
+    background-color: rgba(82, 78, 76, 0.01);
+    border-top: 1px solid var(--shadow-color);
+    padding: var(--padding);
+    border-bottom: 1px solid var(--shadow-color);
     display: flex;
     flex-direction: column;
     gap: 0.5em;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .config-content .config-row {
@@ -381,6 +384,16 @@ hr {
     opacity: 0.9 !important;
 }
 
+.shadow-message-container .config-content {
+    cursor: pointer;
+    opacity: 0.65;
+    transition: all 0.2s var(--default-cubic-bezier);
+}
+
+.shadow-message-container .config-content:hover {
+    opacity: 0.9 !important;
+}
+
 .shadow-message-container.user {
     align-items: flex-end;
     transform-origin: top right;
@@ -464,6 +477,10 @@ hr {
     font-size: var(--fs-footnote);
     color: var(--secondary-color);
     transition: all 0.2s var(--default-cubic-bezier);
+}
+
+.message-container.card .sibling-switcher {
+    margin: 0 var(--padding);
 }
 
 .edit-operation-button {

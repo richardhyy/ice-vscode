@@ -395,10 +395,6 @@
       }
 
       function _renderConfigNode(messageNode, message, clipContent, editing) {
-        const contentContainer = document.createElement("div");
-        contentContainer.classList.add("config-content");
-        messageNode.appendChild(contentContainer);
-
         if (editing) {
           const validityCheckElement = document.createElement("div");
           validityCheckElement.classList.add("validity-check");
@@ -437,7 +433,7 @@
               globalUndoLock = null;
             }
           });
-          contentContainer.appendChild(inputElement);
+          messageNode.appendChild(inputElement);
 
           // Error message
           const operationBar = document.createElement("div");
@@ -495,7 +491,7 @@
             valueElement.innerHTML = _renderMarkdown(config[key], true);
             rowElement.appendChild(valueElement);
 
-            contentContainer.appendChild(rowElement);
+            messageNode.appendChild(rowElement);
           }
         }
       }
@@ -503,7 +499,7 @@
       function createMessageNode(message, clipContent = false, editing = false) {
         const messageNode = document.createElement("div");
         const isConfig = message.role === "#config";
-        messageNode.classList.add(isConfig ? "config-card-content" : "message-node");
+        messageNode.classList.add(isConfig ? "config-content" : "message-node");
         messageNode.dataset.id = message.id;
         messageNode.dataset.vscodeContext = JSON.stringify({ webviewSection: "messageNode", messageRole: message.role });
 
@@ -690,7 +686,7 @@
       }
 
       function handleUpdateConfig(config) {
-        const lastMessage = getLastMessage();
+        const lastMessage = activePath.length > 0 ? flatMessages[activePath[activePath.length - 1]] : null;
         if (lastMessage && lastMessage.role === "#config") { // If the last message is a config
           // Check if there are any changes
           const lastConfig = JSON.parse(lastMessage.content);
@@ -726,7 +722,7 @@
             id: Date.now(),
             role: "#config",
             content: JSON.stringify(config),
-            parentID: lastMessage.id,
+            parentID: lastMessage ? lastMessage.id : null,
             timestamp: new Date().toISOString(),
           };
           addMessage(configMessage);
