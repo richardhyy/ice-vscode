@@ -282,7 +282,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
               );
               webviewPanel.webview.postMessage({ type: 'progress', text: 'Waiting for Response', cancelableRequestID: requestID });
             } catch (e: any) {
-              webviewPanel.webview.postMessage({ type: 'error', error: e.message });
+              vscode.window.showErrorMessage('Error executing provider: ' + e.message);
               webviewPanel.webview.postMessage({ type: 'progress', text: undefined });
             }
           }

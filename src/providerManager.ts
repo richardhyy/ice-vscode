@@ -217,9 +217,9 @@ export class ProviderManager {
     
     for (const key in config.secureVariables) {
       const value = await this.context.secrets.get(keyPrefix + key);
-      if (value === undefined) {
+      if (!value) {
         const inputValue = await this.promptForProviderConfig(providerID, key, config.secureVariables[key], true);
-        if (inputValue === undefined) {
+        if (!inputValue) {
           throw new Error(`Required secure variable ${key} not provided for provider ${providerID}`);
         }
         config.secureVariables[key] = inputValue;
@@ -231,12 +231,12 @@ export class ProviderManager {
 
     for (const key in config.requiredVariables) {
       const value = globalState.get(keyPrefix + key) as string | undefined;
-      if (value === undefined) {
+      if (!value) {
         if (config.requiredVariables[key] !== null) { // Has a default value
           globalState.update(keyPrefix + key, config.requiredVariables[key]);
         } else {
           const inputValue = await this.promptForProviderConfig(providerID, key, config.requiredVariables[key], false);
-          if (inputValue === undefined) {
+          if (!inputValue) {
             throw new Error(`Required variable ${key} not provided for provider ${providerID}`);
           }
           config.requiredVariables[key] = inputValue;
@@ -249,15 +249,9 @@ export class ProviderManager {
 
     for (const key in config.optionalVariables) {
       const value = globalState.get(keyPrefix + key) as string | undefined;
-      if (value === undefined) {
+      if (!value) {
         if (config.optionalVariables[key] !== null) { // Has a default value
           globalState.update(keyPrefix + key, config.optionalVariables[key]);
-        } else {
-          const inputValue = await this.promptForProviderConfig(providerID, key, config.optionalVariables[key], false);
-          if (inputValue !== undefined) {
-            config.optionalVariables[key] = inputValue;
-            globalState.update(keyPrefix + key, inputValue);
-          }
         }
       } else {
         config.optionalVariables[key] = value;
@@ -353,7 +347,7 @@ export class ProviderManager {
       return undefined;
     }
 
-    const { config } = this.providers[providerID];
+    let { config } = this.providers[providerID];
 
     // Return a Provider interface that uses the existing or newly initialized child process.
     return {
@@ -387,6 +381,9 @@ export class ProviderManager {
         const requestID = generateUniqueRequestID(); // Implement a function to generate a unique request ID
       
         this.pendingRequests.set(requestID, { onStream, onCompletion });
+
+        // Reload the config. This also prompts for missing variables.
+        config = await this.readProviderConfig(providerID);
 
         // Merge the config with the override
         let mergedConfig = { ...config.secureVariables, ...config.requiredVariables, ...config.optionalVariables, ...configOverride };
