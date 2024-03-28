@@ -73,6 +73,8 @@
       let messageIDWithChildren = {}; // {messageID: [childID1, childID2, ...]}
       let activePath = [];
       let currentProvider = null;
+      let availableProviders = [];
+      let providerConfigKeys = {}; // {providerID: [configKey1, configKey2, ...]}
 
       let globalUndoLock = null;
 
@@ -394,11 +396,51 @@
         }
       }
 
+      function _updateAvailableConfigKeys(providerID, inputElement, configKeyContainerID) {
+        const configKeyContainer = document.getElementById(configKeyContainerID);
+        configKeyContainer.innerHTML = "";
+        const config = _decodeConfig(inputElement.value);
+
+        function createKeyToken(key, group) {
+          const tokenElement = document.createElement("span");
+          tokenElement.classList.add("config-key-token");
+          tokenElement.textContent = key;
+          tokenElement.title = group;
+          tokenElement.addEventListener("click", function () {
+            inputElement.value += (inputElement.value.length > 0 ? "\n\n" : "") + key + " = ";
+            inputElement.focus();
+            _updateAvailableConfigKeys(configKeyContainer);
+          });
+          configKeyContainer.appendChild(tokenElement);
+        }
+
+        for (let group of Object.keys(providerConfigKeys[providerID])) {
+          for (let key of providerConfigKeys[providerID][group]) {
+            if (config[key] === undefined) {
+              createKeyToken(key, group);
+            }
+          }
+        }
+
+        // Add the Provider key
+        if (config["Provider"] === undefined) {
+          createKeyToken("Provider", "Chat Provider");
+        }
+      }
+
       function _renderConfigNode(messageNode, message, clipContent, editing) {
         if (editing) {
+          const config = getMessageConfig(message.id);
+          const providerID = config.Provider || currentProvider;
+
           const validityCheckElement = document.createElement("div");
           validityCheckElement.classList.add("validity-check");
+          
+          const configKeyContainer = document.createElement("div");
+          configKeyContainer.classList.add("config-key-container");
+          configKeyContainer.id = `config-key-container-${message.id}`;
 
+          let updateAvailableConfigKeysTimeout = null;  // Debounce the update of available config keys
           const inputElement = document.createElement("textarea");
           inputElement.dataset.id = message.id;
           inputElement.value = _encodeConfig(JSON.parse(message.content));
@@ -423,10 +465,16 @@
             } else {
               validityCheckElement.textContent = "";
             }
+
+            // Debounce the update of available config keys
+            clearTimeout(updateAvailableConfigKeysTimeout);
+            updateAvailableConfigKeysTimeout = setTimeout(_updateAvailableConfigKeys, 300, providerID, inputElement, configKeyContainer.id);
           });
           inputElement.addEventListener("focus", function (event) {
             auto_grow(event.target);
             globalUndoLock = message.id;
+
+            _updateAvailableConfigKeys(providerID, inputElement, configKeyContainer.id);
           });
           inputElement.addEventListener("blur", function (event) {
             if (globalUndoLock === message.id) {
@@ -435,16 +483,16 @@
           });
           messageNode.appendChild(inputElement);
 
-          // Error message
           const operationBar = document.createElement("div");
           operationBar.classList.add("operation-bar");
           messageNode.appendChild(operationBar);
 
-          operationBar.appendChild(validityCheckElement);
+          // Config Key Container
+          operationBar.appendChild(configKeyContainer);
 
-          // Buttons
+          // Save and Cancel Buttons
           const buttonContainer = document.createElement("div");
-          buttonContainer.classList.add("button-container");
+          buttonContainer.classList.add("operation-group");
           operationBar.appendChild(buttonContainer);
 
           const cancelButtonElement = document.createElement("button");
@@ -468,12 +516,15 @@
             );
           });
 
-          if (isMac) {
-            buttonContainer.appendChild(saveButtonElement);
-            buttonContainer.appendChild(cancelButtonElement);
-          } else {
-            buttonContainer.appendChild(cancelButtonElement);
-            buttonContainer.appendChild(saveButtonElement);
+          buttonContainer.appendChild(cancelButtonElement);
+          buttonContainer.appendChild(saveButtonElement);
+
+          // Fetch provider config keys
+          if (providerID) {
+            vscode.postMessage({
+              type: "fetchProviderConfig",
+              providerID: providerID,
+            });
           }
         } else {
           const config = JSON.parse(message.content);
@@ -920,6 +971,12 @@
                 type: message.type,
               });
             }
+            break;
+          case "providerIDs":
+            availableProviders = message.providerIDs;
+            break;
+          case "providerConfig":
+            providerConfigKeys[message.providerID] = message.configKeys;
             break;
           default:
             console.error("Unknown message type", message.type);

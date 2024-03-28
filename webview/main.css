@@ -246,7 +246,9 @@ hr {
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
-    gap: 0.5em;
+    font-size: var(--fs-footnote);
+    gap: 1em;
+    margin-top: 0.5em;
 }
 
 .message-container.card .validity-check {
@@ -255,34 +257,53 @@ hr {
     font-style: italic;
 }
 
-.message-container.card .button-container {
+.message-container.card .operation-group {
     display: flex;
-    flex-direction: row-reverse;
+    flex-direction: row;
     gap: 1em;
-    margin-top: 0.5em;
 }
 
-.message-container.card .button-container .button {
+.message-container.card .operation-group .button {
     background-color: var(--secondary-color);
     color: var(--edit-operation-color);
     border: none;
-    font-size: var(--fs-footnote);
     padding: 0.5em 1em;
     border-radius: var(--border-radius);
     cursor: pointer;
     transition: all 0.2s var(--default-cubic-bezier);
 }
 
-.message-container.card .button-container .button.primary {
+.message-container.card .operation-group .button.primary {
     background-color: var(--accent-color);
 }
 
-.message-container.card .button-container .button:hover {
+.message-container.card .operation-group .button:hover {
     filter: brightness(90%);
 }
 
-.message-container.card .button-container .button:active {
+.message-container.card .operation-group .button:active {
     filter: brightness(80%);
+}
+
+.config-key-container {
+    display: flex;
+    overflow-x: auto;
+    white-space: nowrap;
+    padding: 5px 0;
+    gap: 5px;
+}
+
+.config-key-container::-webkit-scrollbar {
+    height: 3px;
+}
+
+.config-key-token {
+    display: inline-block;
+    background-color: var(--light-gray);
+    border-radius: var(--border-radius);
+    border: 1px solid var(--shadow-color);
+    padding: 0.2em 0.5em;
+    cursor: pointer;
 }
 
 .config-content {
