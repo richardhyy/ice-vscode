@@ -692,7 +692,9 @@
         const messageContainer = createMessageContainer(emptyUserMessage, true);
         conversationContainer.appendChild(messageContainer);
 
-        focusMessageInput(emptyUserMessage.id);
+        if (currentProvider) {  // Do not focus if there is no provider selected, because this dismisses the VSCode's quick pick menu
+          focusMessageInput(emptyUserMessage.id);
+        }
       }
 
       function renderConversation(shouldAnimateLastMessage = false) {
@@ -809,10 +811,10 @@
           scanMessageTree();
           rerenderMessage(lastMessage.id);
         } else { // Create a new config message
-          insertConfigUpdate(lastMessage ? lastMessage.id : null, config);
+          const configMessageID = insertConfigUpdate(lastMessage ? lastMessage.id : null, config);
 
           scanMessageTree();
-          activePath = getPathWithMessage(configMessage.id);
+          activePath = getPathWithMessage(configMessageID);
           renderConversation();
         }
       }
