@@ -5,9 +5,11 @@ import * as yaml from 'js-yaml';
 import { Provider, ProviderManager } from './providerManager';
 import { ChatAction, ChatHistoryManager, ChatMessage } from './chatHistoryManager';
 import html from '../webview/chatview.html';
+import { InstantChatManager } from './instantChatManager';
 
 let extensionContext: vscode.ExtensionContext;
 let chatViewProvider: ChatViewProvider;
+let instantChatManager: InstantChatManager;
 let statusBarItem: vscode.StatusBarItem;
 
 function postMessageToCurrentWebview(message: any) {
@@ -19,9 +21,28 @@ function postMessageToCurrentWebview(message: any) {
 export function activate(context: vscode.ExtensionContext) {
   extensionContext = context;
   chatViewProvider = new ChatViewProvider(context);
+  instantChatManager = new InstantChatManager(context);
 
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.open', openChatView));
   context.subscriptions.push(vscode.window.registerCustomEditorProvider('chat-view.editor', chatViewProvider));
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('flowchat.instantChat.new', async () => {
+      const chatFilePath = instantChatManager.createNewInstantChat();
+      openChatView(vscode.Uri.file(chatFilePath));
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('flowchat.instantChat.resume', async () => {
+      const chatFilePath = instantChatManager.getLastInstantChat();
+      if (chatFilePath) {
+        openChatView(vscode.Uri.file(chatFilePath));
+      } else {
+        vscode.window.showInformationMessage('No previous instant chat found.');
+      }
+    })
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('flowchat.downloadProvider', async () => {

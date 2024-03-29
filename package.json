@@ -24,6 +24,14 @@
   "contributes": {
     "commands": [
       {
+        "command": "flowchat.instantChat.new",
+        "title": "FlowChat: New Instant Chat"
+      },
+      {
+        "command": "flowchat.instantChat.resume",
+        "title": "FlowChat: Continue Last Instant Chat"
+      },
+      {
         "command": "chat-view.open",
         "title": "Open Chat View"
       },
