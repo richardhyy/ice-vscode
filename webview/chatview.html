@@ -547,17 +547,35 @@
         }
       }
 
+      function _renderHeader(messageNode, message) {
+        const contentObj = JSON.parse(message.content);
+        const createdDate = new Date(contentObj.createdAt);
+        const createdDateString = createdDate.toLocaleString();
+
+        const creationDateElement = document.createElement("span");
+        creationDateElement.classList.add("creation-date");
+        creationDateElement.textContent = createdDateString;
+        creationDateElement.title = "Created at " + createdDateString;
+        messageNode.appendChild(creationDateElement);
+      }
+
       function createMessageNode(message, clipContent = false, editing = false) {
         const messageNode = document.createElement("div");
-        const isConfig = message.role === "#config";
-        messageNode.classList.add(isConfig ? "config-content" : "message-node");
         messageNode.dataset.id = message.id;
         messageNode.dataset.vscodeContext = JSON.stringify({ webviewSection: "messageNode", messageRole: message.role });
 
-        if (isConfig) {
-          _renderConfigNode(messageNode, message, clipContent, editing);
-        } else {
-          _renderBubbleMessage(messageNode, message, clipContent, editing);
+        switch (message.role) {
+          case "#config":
+            messageNode.classList.add("config-content");
+            _renderConfigNode(messageNode, message, clipContent, editing);
+            break;
+          case "#head":
+            messageNode.classList.add("header-content");
+            _renderHeader(messageNode, message);
+            break;
+          default:
+            messageNode.classList.add("message-node");
+            _renderBubbleMessage(messageNode, message, clipContent, editing);
         }
 
         return messageNode;

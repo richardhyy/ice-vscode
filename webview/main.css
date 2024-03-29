@@ -233,6 +233,18 @@ hr {
     gap: var(--padding);
 }
 
+.header-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    opacity: 0.6;
+}
+
+.header-content .creation-date {
+    font-size: var(--fs-footnote);
+    color: var(--accent-color);
+}
+
 .message-container {
     cursor: initial;
 }

@@ -5,7 +5,7 @@ import { UndoRedoManager } from './undoRedoManager';
 
 export interface ChatMessage {
   id: number;
-  role: 'user' | 'assistant' | '#config' | string;
+  role: 'user' | 'assistant' | '#config' | '#head' | string;
   content: string;
   customFields?: Record<string, any>;
   parentID: number | null;
@@ -13,7 +13,7 @@ export interface ChatMessage {
 }
 
 export interface ChatAction {
-  action: string;
+  action: 'Add' | 'Edit' | 'Delete' | string;
   [key: string]: any;
 }
 
@@ -68,8 +68,14 @@ export class ChatHistoryManager {
     }
 
     const fileContent = await fs.promises.readFile(this.chatFilePath, 'utf-8');
-    const actions = yaml.load(fileContent) as ChatAction[];
-    return actions || [];
+    let actions = (yaml.load(fileContent) as ChatAction[]) || [];
+
+    // Check if the head exists, if not insert it
+    if (actions.length === 0 || !actions[0].role || actions[0].role !== '#head') {
+      actions = await this.insertHead(actions);
+    }
+
+    return actions;
   }
 
   public async flush(): Promise<void> {
@@ -134,5 +140,53 @@ export class ChatHistoryManager {
   private async writeActions(actions: ChatAction[]): Promise<void> {
     const yamlContent = yaml.dump(actions);
     await fs.promises.appendFile(this.chatFilePath, yamlContent, 'utf-8');
+  }
+
+  private async insertHead(actions: ChatAction[]): Promise<ChatAction[]> {
+    console.log('Inserting head to the chat history');
+
+    const originalActions = [...actions];
+
+    const fileCreationTime = fs.statSync(this.chatFilePath).birthtime.toISOString();
+
+    const headAction: ChatAction = {
+      action: 'Add',
+      id: 1,
+      role: '#head',
+      content: JSON.stringify({
+        version: '1.1',
+        createdAt: fileCreationTime,
+        comment: 'This is the head of the chat history file. Do not modify it.'
+      }),
+      parentID: null,
+      timestamp: new Date().toISOString(),
+    };
+
+    // Insert the head action at the beginning
+    actions.unshift(headAction);
+    const headID = headAction.id;
+
+    // Scan the rest of the actions to update the parentID if null
+    for (let i = 1; i < actions.length; i++) {
+      if (actions[i].id === headID) {
+        console.error('Head ID is already taken by another action');
+        return originalActions;
+      }
+
+      if (actions[i].parentID === null) {
+        console.log(`Updating parentID of action ${actions[i].id} to ${headID} (head)`);
+        actions[i].parentID = headID;
+      }
+    }
+
+    if (actions.length > 1) {
+      // Backup the original file
+      const backupFilePath = this.chatFilePath + '.bak';
+      await fs.promises.copyFile(this.chatFilePath, backupFilePath);
+    }
+
+    await fs.promises.writeFile(this.chatFilePath, yaml.dump(actions), 'utf-8');
+
+    return actions;
   }
 }

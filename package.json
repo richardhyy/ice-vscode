@@ -104,12 +104,12 @@
         },
         {
           "command": "chat-view.message.toggleEdit",
-          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode'",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head'",
           "group": "message_operations"
         },
         {
           "command": "chat-view.message.duplicate",
-          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode'",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head'",
           "group": "message_operations"
         },
         {
@@ -124,7 +124,7 @@
         },
         {
           "command": "chat-view.message.delete",
-          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode'",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head'",
           "group": "message_operations_dangerous"
         }
       ]
