@@ -225,7 +225,7 @@ hr {
 }
 
 .custom-tag {
-    display: inline-block;
+    display: block;
     color: var(--primary-color);
     margin: 0.2em 0;
 }
