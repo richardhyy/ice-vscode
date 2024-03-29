@@ -4,6 +4,10 @@ All notable changes to the "flowchat" extension will be documented in this file.
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.2.2] - 2024-03-29
+### Fixed
+- Issue where some tags were not rendered correctly in the chat view
+
 ## [0.2.1] - 2024-03-29
 ### Fixed
 - Issue where custom tags were not being properly rendered in the chat view

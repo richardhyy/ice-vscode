@@ -71,6 +71,10 @@ As FlowChat is in early development, you may encounter bugs or instability. If y
 
 ## Release Notes
 
+### 0.2.2
+
+- Fixed an issue where some tags were not rendered correctly in the chat view
+
 ### 0.2.1
 
 - Fixed an issue where custom tags were not being properly rendered in the chat view
