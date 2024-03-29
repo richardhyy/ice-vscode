@@ -232,7 +232,7 @@
           if (obj.hasOwnProperty(key)) {
             let value = obj[key];
             if (typeof value === 'string') {
-              lines.push(key + ' = ' + value.replace(/\n/g, '\n '));
+              lines.push(key + ' = ' + value.replace(/\n/g, '\n'));
             } else {
               lines.push(key + ' = ' + value);
             }
