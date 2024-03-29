@@ -130,8 +130,20 @@ pre {
 }
 
 pre code {
+    display: block;
     color: inherit;
     background-color: transparent;
+    white-space: pre-wrap;
+    overflow: auto;
+}
+
+pre code::-webkit-scrollbar {
+    height: 5px;
+    width: 5px;
+}
+
+pre code::-webkit-scrollbar-corner {
+    background: transparent;
 }
 
 pre .copy-button {
@@ -151,6 +163,7 @@ pre .copy-button {
     align-items: center;
     opacity: 0.5;
     transition: opacity 0.2s var(--default-cubic-bezier);
+    mix-blend-mode: multiply;
 }
 
 pre .copy-button:hover {
@@ -400,6 +413,10 @@ hr {
 
 .message-container.user > .message-nodes-container {
     align-items: flex-end;
+}
+
+.message-container.user pre code {
+    max-height: 60vh;
 }
 
 .shadow-message-container {
