@@ -4,7 +4,10 @@ All notable changes to the "flowchat" extension will be documented in this file.
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [Unreleased]
+## [0.2.1] - 2024-03-29
+### Fixed
+- Issue where custom tags were not being properly rendered in the chat view
+- Configuration values with multiple lines are no longer displayed with extra spaces
 
 ## [0.2.0] - 2024-03-29
 ### Added

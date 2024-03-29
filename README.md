@@ -71,6 +71,11 @@ As FlowChat is in early development, you may encounter bugs or instability. If y
 
 ## Release Notes
 
+### 0.2.1
+
+- Fixed an issue where custom tags were not being properly rendered in the chat view
+- Configuration values with multiple lines are no longer displayed with extra spaces
+
 ### 0.2.0
 
 - Added Instant Chat feature for quickly chatting with LLMs
