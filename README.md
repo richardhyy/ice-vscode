@@ -4,20 +4,46 @@ FlowChat is a flexible, easy-to-use VSCode extension that allows users to experi
 
 ![FlowChat Screenshot](images/screenshot.png)
 
+> ❓ **Wondering how to use?** 
+>
+> Check out the [Basic Usage](#-basic-usage) section below.
+
 ## Features
 
 - Chat with built-in LLM providers (API keys required):
   - OpenAI
   - Anthropic
+  - Google
+  - ZHIPU AI
   - Poe
 - Persist chat histories as `.chat` files (YAML format) 
   - Easily manage and share conversations
   - Add chat histories to version control
 - Fork conversations to explore different paths
   - Edit both user and LLM messages
+  - Resend/regenerate
+  - Inline configuration editing and switching
   - Changes are saved to the `.chat` file
+- Instant Chat feature for quickly chatting with LLMs
 - Create custom LLM providers using JavaScript
 - Configure API keys and settings for built-in providers
+
+## ➡️ Basic Usage
+
+### Instant Chat
+
+1. Open Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P` on macOS)
+2. Type "Instant Chat" (you don't have to type the whole thing, it should autocomplete)
+3. If the "FlowChat: Instant Chat" command is highlighted, press `Enter`
+4. You can now select a chat provider and start chatting! (API keys required)
+
+**Note:** You can continue a previous Instant Chat session by running "FlowChat: Continue Last Instant Chat" from the Command Palette.
+
+### Managing Chat Sessions as `.chat` Files
+
+1. Create a new file with a `.chat` extension (e.g., `my_conversation.chat`)
+2. Open the file
+3. Select a chat provider to start (API keys required)
 
 ## Requirements
 
@@ -44,6 +70,18 @@ As FlowChat is in early development, you may encounter bugs or instability. If y
 - UI improvements
 
 ## Release Notes
+
+### 0.2.0
+
+- Added Instant Chat feature for quickly chatting with LLMs
+- Added the ability to quickly edit and switch between configurations in the chat view
+- Added Google Gemini provider
+- Added ZHIPU GLM provider
+- Improved configuration initialization experience
+- Improved code block scrolling behavior
+- Enhanced error handling and chat provider variable prompt logic
+- Fixed an issue where empty assistant messages were not deleted when regenerating responses
+- Fixed display issues with configuration update cards for better readability
 
 ### 0.1.0
 
