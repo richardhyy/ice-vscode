@@ -224,6 +224,18 @@ hr {
     margin: 1em 0;
 }
 
+.custom-tag {
+    display: inline-block;
+    color: var(--primary-color);
+    margin: 0.2em 0;
+}
+
+.custom-tag .custom-tag-indicator {
+    display: block;
+    color: var(--accent-color);
+    font-weight: 400;
+}
+
 @keyframes fadeIn {
     0% {
         opacity: 0;
