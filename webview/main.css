@@ -118,6 +118,7 @@ ul, ol {
 code {
     color: var(--dark-gray);
     font-family: monospace;
+    word-wrap: break-word;
 }
 
 pre {
