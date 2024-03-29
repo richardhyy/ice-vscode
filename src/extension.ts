@@ -68,6 +68,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.resend', async () => {
     postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'resend' });
   }));
+  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.insertConfigUpdate.before', async () => {
+    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'insertConfigUpdate', subOperation: 'before' });
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.insertConfigUpdate.after', async () => {
+    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'insertConfigUpdate', subOperation: 'after' });
+  }));
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.copy', async () => {
     postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'copy' });
   }));

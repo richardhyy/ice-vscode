@@ -330,6 +330,11 @@ hr {
     box-sizing: border-box;
 }
 
+.config-content .no-config {
+    color: var(--secondary-color);
+    font-style: italic;
+}
+
 .config-content .config-row {
     display: flex;
     flex-direction: row;

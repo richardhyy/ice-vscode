@@ -61,6 +61,21 @@
         "category": "Chat View Context"
       },
       {
+        "command": "chat-view.message.insertConfigUpdate",
+        "title": "Insert Config Update",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.insertConfigUpdate.before",
+        "title": "Insert Before",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.insertConfigUpdate.after",
+        "title": "Insert After",
+        "category": "Chat View Context"
+      },
+      {
         "command": "chat-view.message.delete",
         "title": "Delete",
         "category": "Chat View Context"
@@ -123,12 +138,36 @@
           "group": "message_operations"
         },
         {
+          "submenu": "chat-view.message.insertConfigUpdate",
+          "group": "message_operations"
+        },
+        {
           "command": "chat-view.message.delete",
           "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head'",
           "group": "message_operations_dangerous"
         }
+      ],
+      "chat-view.message.insertConfigUpdate": [
+        {
+          "command": "chat-view.message.insertConfigUpdate.before",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && (messageRole == 'assistant' || messageRole == 'user')",
+          "group": "message_operations@0"
+        },
+        {
+          "command": "chat-view.message.insertConfigUpdate.after",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && (messageRole == 'assistant' || messageRole == 'user')",
+          "group": "message_operations@1"
+        }
       ]
-    }
+    },
+    "submenus": [
+      {
+        "id": "chat-view.message.insertConfigUpdate",
+        "label": "Insert Config Update",
+        "icon": "$(gear)",
+        "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && (messageRole == 'assistant' || messageRole == 'user')"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "yarn run package",

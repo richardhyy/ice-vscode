@@ -528,21 +528,29 @@
           }
         } else {
           const config = JSON.parse(message.content);
-          for (let key in config) {
-            const rowElement = document.createElement("div");
-            rowElement.classList.add("config-row");
 
-            const keyElement = document.createElement("span");
-            keyElement.classList.add("config-key");
-            keyElement.textContent = key;
-            rowElement.appendChild(keyElement);
+          if (Object.keys(config).length === 0) {
+            const noConfigElement = document.createElement("div");
+            noConfigElement.classList.add("no-config");
+            noConfigElement.textContent = "Empty Config";
+            messageNode.appendChild(noConfigElement);
+          } else {
+            for (let key in config) {
+              const rowElement = document.createElement("div");
+              rowElement.classList.add("config-row");
 
-            const valueElement = document.createElement("span");
-            valueElement.classList.add("config-value");
-            valueElement.innerHTML = _renderMarkdown(config[key], true);
-            rowElement.appendChild(valueElement);
+              const keyElement = document.createElement("span");
+              keyElement.classList.add("config-key");
+              keyElement.textContent = key;
+              rowElement.appendChild(keyElement);
 
-            messageNode.appendChild(rowElement);
+              const valueElement = document.createElement("span");
+              valueElement.classList.add("config-value");
+              valueElement.innerHTML = _renderMarkdown(config[key], true);
+              rowElement.appendChild(valueElement);
+
+              messageNode.appendChild(rowElement);
+            }
           }
         }
       }
@@ -754,6 +762,20 @@
         console.log("activePath", activePath);
       }
 
+      function insertConfigUpdate(parentID, content = {}) {
+        const id = Date.now();
+        const configMessage = {
+          id: id,
+          role: "#config",
+          content: JSON.stringify(content),
+          parentID: parentID,
+          timestamp: new Date().toISOString(),
+        };
+        updateFlatMessages(configMessage);
+        addMessage(configMessage);
+        return id;
+      }
+
       function handleUpdateConfig(config) {
         const lastMessage = activePath.length > 0 ? flatMessages[activePath[activePath.length - 1]] : null;
         if (lastMessage && lastMessage.role === "#config") { // If the last message is a config
@@ -787,16 +809,8 @@
           scanMessageTree();
           rerenderMessage(lastMessage.id);
         } else { // Create a new config message
-          const configMessage = {
-            id: Date.now(),
-            role: "#config",
-            content: JSON.stringify(config),
-            parentID: lastMessage ? lastMessage.id : null,
-            timestamp: new Date().toISOString(),
-          };
-          addMessage(configMessage);
+          insertConfigUpdate(lastMessage ? lastMessage.id : null, config);
 
-          updateFlatMessages(configMessage);
           scanMessageTree();
           activePath = getPathWithMessage(configMessage.id);
           renderConversation();
@@ -887,7 +901,7 @@
         }
       }
 
-      function contextMenuOperation(operation) {
+      function contextMenuOperation(operation, subOperation) {
         const cursorHoverElements = document.querySelectorAll(":hover");
 
         let messageID;
@@ -947,6 +961,30 @@
               text: flatMessages[messageID].content,
             });
             break;
+          case "insertConfigUpdate":
+            const position = subOperation;
+            let parentID;
+            if (position === "before") {
+              parentID = flatMessages[messageID].parentID;
+            } else if (position === "after") {
+              parentID = messageID;
+            } else {
+              console.error("Unknown position", position);
+              return;
+            }
+            if (!flatMessages[parentID]) {
+              vscode.postMessage({
+                type: "error",
+                error: "Unable to insert config update, parent message not found",
+              });
+              return;
+            }
+            const id = insertConfigUpdate(parentID);
+            scanMessageTree();
+            activePath = getPathWithMessage(id);
+            renderConversation();
+            toggleEdit(id);
+            break;
           default:
             console.error("Unknown context menu operation", operation);
         }
@@ -968,7 +1006,7 @@
             deleteMessage(message.messageID);
             break;
           case "contextMenuOperation":
-            contextMenuOperation(message.operation);
+            contextMenuOperation(message.operation, message.subOperation);
             break;
           case "selectProvider":
             currentProvider = message.providerID;
