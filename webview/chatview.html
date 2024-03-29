@@ -5,7 +5,6 @@
     <title>Chat View</title>
     <link rel="stylesheet" href="./main.css" />
     <script src="./libs/marked.min.js"></script>
-    <script src="./libs/purify.min.js"></script>
   </head>
   <body>
     <div id="conversation-scroll-container">
@@ -198,22 +197,29 @@
 
         const customTags = doc.querySelectorAll('*');
         customTags.forEach((tag) => {
-          if (!['HTML', 'HEAD', 'BODY', 'DIV', 'SPAN', 'P', 'A', 'IMG', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'LI', 'CODE', 'PRE', 'BLOCKQUOTE'].includes(tag.tagName)) {
+          if (!['HTML', 'HEAD', 'BODY', 'DIV', 'SPAN', 'P', 'A', 'IMG', 'H1', 
+                'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'LI', 'CODE', 'PRE', 
+                'BLOCKQUOTE', 'STRONG', 'EM', 'I', 'TABLE', 'THEAD', 'TBODY', 
+                'TH', 'TD', 'TR', 'BR', 'HR'].includes(tag.tagName)) {
             const tagName = tag.tagName.toLowerCase();
             const customTag = document.createElement('div');
             customTag.className = 'custom-tag';
             customTag.dataset.tag = tagName;
-            customTag.innerHTML = tag.innerHTML;
 
             const heading = document.createElement('div');
             heading.className = 'custom-tag-indicator';
             heading.textContent = `<${tagName}>`;
-            customTag.insertAdjacentElement('afterbegin', heading);
+            customTag.appendChild(heading);
+
+            const content = document.createElement('span');
+            content.className = 'custom-tag-content';
+            content.innerHTML = tag.innerHTML;
+            customTag.appendChild(content);
 
             const ending = document.createElement('div');
             ending.className = 'custom-tag-indicator';
             ending.textContent = `</${tagName}>`;
-            customTag.insertAdjacentElement('beforeend', ending);
+            customTag.appendChild(ending);
 
             tag.parentNode.replaceChild(customTag, tag);
           }
@@ -223,7 +229,7 @@
       }
 
       function _renderMarkdown(content, singleBreakForNewLine = false) {
-        return DOMPurify.sanitize(_convertCustomTags(marked.parse(content, { "breaks": singleBreakForNewLine })));
+        return _convertCustomTags(marked.parse(content, { "breaks": singleBreakForNewLine }));
       }
 
       function _encodeConfig(obj) {
