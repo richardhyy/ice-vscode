@@ -145,7 +145,8 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
       providers.map(async (providerID) => {
         const provider = await this.providerManager.getProviderByID(providerID);
         if (provider) {
-          return new ProviderQuickPickerItem(provider.info['name'] || provider.id, provider.info['description'] || '', provider.id, provider);
+          const label = (this.currentProvider?.id === provider.id ? '$(check) ' : '') + (provider.info['name'] || provider.id);
+          return new ProviderQuickPickerItem(label, provider.info['name'] ? ` (${provider.id})` : '', provider.info['description'], provider);
         }
         return new ProviderQuickPickerItem(providerID, 'Provider not found', providerID, undefined);
       })
