@@ -93,7 +93,7 @@ process.on('message', (message) => {
       return null;
     }
 
-    let reponseText = '';
+    let responseText = '';
 
     const req = https.request(options, (res) => {
       debug(`Response status code: ${res.statusCode}\n`);
@@ -116,7 +116,7 @@ process.on('message', (message) => {
               responseData = '';
               const partialText = handleEvent(event, data);
               if (partialText !== null) {
-                reponseText += partialText;
+                responseText += partialText;
               }
             }
             event = line.substring(7).trim();
@@ -142,7 +142,7 @@ process.on('message', (message) => {
           responseData = '';
           const partialText = handleEvent(event, data);
           if (partialText !== null) {
-            reponseText += partialText;
+            responseText += partialText;
           }
         }
       });
@@ -152,7 +152,7 @@ process.on('message', (message) => {
         process.send({
           type: 'done',
           requestID: requestID,
-          finalText: reponseText
+          finalText: responseText
         });
 
         if (requests[requestID]) {
@@ -180,7 +180,7 @@ process.on('message', (message) => {
       process.send({
         type: 'done',
         requestID: requestID,
-        finalText: reponseText
+        finalText: responseText
       });
 
       if (requests[requestID]) {

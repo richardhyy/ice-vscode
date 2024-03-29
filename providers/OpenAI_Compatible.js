@@ -107,7 +107,7 @@ process.on('message', (message) => {
       return null;
     }
 
-    let reponseText = '';
+    let responseText = '';
 
     const req = https.request(options, (res) => {
       debug(`Response status code: ${res.statusCode}\n`);
@@ -127,7 +127,7 @@ process.on('message', (message) => {
               const data = JSON.parse(dataStr);
               const partialText = handleEvent(data);
               if (partialText !== null) {
-                reponseText += partialText;
+                responseText += partialText;
               }
             }
           }
@@ -141,7 +141,7 @@ process.on('message', (message) => {
         process.send({
           type: 'done',
           requestID: requestID,
-          finalText: reponseText
+          finalText: responseText
         });
       });
     });
@@ -162,7 +162,7 @@ process.on('message', (message) => {
       process.send({
         type: 'done',
         requestID: requestID,
-        finalText: reponseText
+        finalText: responseText
       });
 
       if (requests[requestID]) {
