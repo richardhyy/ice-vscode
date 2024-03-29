@@ -872,6 +872,11 @@
       function regenerateMessage(messageID) {
         const message = flatMessages[messageID];
         if (message && message.role === "assistant") {
+          if (message.content.trim() === "") {
+            // If the message is empty, delete it
+            deleteMessage(messageID);
+          }
+
           const parentMessage = flatMessages[message.parentID];
           if (parentMessage) {
             sendMessage(parentMessage);
