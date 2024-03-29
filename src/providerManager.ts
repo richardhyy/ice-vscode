@@ -49,6 +49,7 @@ export class ProviderManager {
   private builtInProviders = [
     'OpenAI_Compatible.js',
     'Claude.js',
+    'Gemini.js',
     'Poe.js',
   ];
   private providers: {
