@@ -531,14 +531,63 @@ hr {
     width: 100%;
 }
 
+.message-content-editing .attachment-button {
+    border-radius: var(--border-radius-xlarge);
+    border-width: 0.6px !important;
+    border-style: solid !important;
+    border-color: var(--tertiary-color) !important;
+    background-color: transparent;
+    width: 1.7em;
+    height: 1.7em;
+    border: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.2s var(--default-cubic-bezier);
+}
+
+.message-content-editing .attachment-button:hover {
+    background-color: var(--tertiary-color);
+    filter: brightness(95%);
+}
+
+.message-content-editing .attachment-button:active {
+    background-color: var(--tertiary-color);
+    filter: brightness(88%);
+}
+
+.message-content-editing .attachment-button svg {
+    width: 62%;
+    height: 62%;
+    color: var(--shadow-color);
+    transition: color 0.2s var(--default-cubic-bezier);
+}
+
 .message-content-editing {
+    display: flex;
+    flex-direction: row;
+    gap: 0.1em;
     border: 1px solid var(--shadow-color);
     background: transparent !important;
     transition: border 0.1s var(--default-cubic-bezier);
 }
 
+.message-container.user .message-content-editing {
+    padding-right: var(--padding); /* To reduce the gap between the attachment button and the right border */
+}
+
 .message-content-editing:focus-within {
     border: 1px solid var(--accent-color) !important;
+}
+
+.message-content-editing:focus-within .attachment-button {
+    border-width: 1px !important;
+}
+
+.message-content-editing:focus-within .attachment-button svg {
+    color: var(--accent-color) !important;
 }
 
 .sibling-switcher {

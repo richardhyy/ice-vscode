@@ -386,6 +386,21 @@
           });
 
           messageContent.append(inputElement);
+
+          if (message.role === "user") {
+            // Attachment button
+            const attachmentButton = document.createElement("button");
+            attachmentButton.className = "attachment-button";
+            attachmentButton.innerHTML = ICON_PAPERCLIP;
+            attachmentButton.title = "Attach an image/file";
+            attachmentButton.addEventListener("click", function () {
+              vscode.postMessage({
+                type: "selectAttachment",
+                messageID: message.id,
+              });
+            });
+            messageContent.appendChild(attachmentButton);
+          }
         } else {  // Not editing
           const renderedContent = _renderMarkdown(message.content + (message.incomplete && message.content.length === 0 ? "..." : ""), message.role === "user");
           if (clipContent) {
