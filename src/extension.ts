@@ -24,7 +24,11 @@ export function activate(context: vscode.ExtensionContext) {
   instantChatManager = new InstantChatManager(context);
 
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.open', openChatView));
-  context.subscriptions.push(vscode.window.registerCustomEditorProvider('chat-view.editor', chatViewProvider));
+  context.subscriptions.push(vscode.window.registerCustomEditorProvider('chat-view.editor', chatViewProvider, {
+    webviewOptions: {
+      retainContextWhenHidden: true,
+    },
+  }));
 
   context.subscriptions.push(
     vscode.commands.registerCommand('flowchat.instantChat.new', async () => {
@@ -223,9 +227,6 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
     webviewPanel.onDidChangeViewState(e => {
       if (webviewPanel.active && webviewPanel.visible) {
         this.activeWebview = webviewPanel;
-        (async () => {
-          await this.loadChatHistory(webviewPanel, chatHistoryManager);
-        })();
         statusBarItem.show();
       } else if (this.activeWebview === webviewPanel) {
         this.activeWebview = null;
