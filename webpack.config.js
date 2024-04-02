@@ -1,42 +1,77 @@
-const CopyPlugin = require("copy-webpack-plugin");
-
 //@ts-check
 
 'use strict';
 
+const CopyPlugin = require("copy-webpack-plugin");
+const webpack = require('webpack');
+const fs = require('fs');
+const glob = require("glob");
 const path = require('path');
 
 //@ts-check
 /** @typedef {import('webpack').Configuration} WebpackConfig **/
 
+// Dictionary configuration
+const dictionaryConfig = {
+  target: 'node',
+  mode: 'none',
+  entry: glob.sync('./providers/*/main.js').reduce((acc, filePath) => {
+    const dictionaryName = path.basename(path.dirname(filePath));
+    acc[dictionaryName] = './' + filePath;
+    return acc;
+  }, {}),
+  output: {
+    path: path.resolve(__dirname, 'dist_providers'),
+    filename: '[name].js',
+    libraryTarget: 'commonjs2'
+  },
+  plugins: [
+    new webpack.BannerPlugin({
+      banner: (pathData) => {
+        console.log(pathData);
+        // @ts-ignore
+        const filePath = pathData.chunk.entryModule.resource;
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        // @ts-ignore
+        const commentHeader = fileContent.match(/\/\/\s==FlowChatProvider==[\s\S]*?\/\/\s==\/FlowChatProvider==/)[0];
+        return commentHeader;
+      },
+      raw: true,
+      entryOnly: true,
+    })
+  ],
+  resolve: {
+    extensions: ['.js']
+  },
+  optimization: {
+    minimize: false,
+  },
+};
+
 /** @type WebpackConfig */
 const extensionConfig = {
-  target: 'node', // VS Code extensions run in a Node.js-context 📖 -> https://webpack.js.org/configuration/node/
-	mode: 'none', // this leaves the source code as close as possible to the original (when packaging we set this to 'production')
-
-  entry: './src/extension.ts', // the entry point of this extension, 📖 -> https://webpack.js.org/configuration/entry-context/
+  target: 'node',
+  mode: 'none',
+  entry: './src/extension.ts',
   output: {
-    // the bundle is stored in the 'dist' folder (check package.json), 📖 -> https://webpack.js.org/configuration/output/
     path: path.resolve(__dirname, 'dist'),
     filename: 'extension.js',
     libraryTarget: 'commonjs2'
-    },
-    plugins: [
+  },
+  plugins: [
     new CopyPlugin({
       patterns: [
-      {
-        from: './providers',
-        to: 'providers',
-      }
+        {
+          from: './dist_providers',
+          to: 'providers',
+        }
       ]
     })
-    ],
+  ],
   externals: {
-    vscode: 'commonjs vscode' // the vscode-module is created on-the-fly and must be excluded. Add other modules that cannot be webpack'ed, 📖 -> https://webpack.js.org/configuration/externals/
-    // modules added here also need to be added in the .vscodeignore file
+    vscode: 'commonjs vscode'
   },
   resolve: {
-    // support reading TypeScript and JavaScript files, 📖 -> https://github.com/TypeStrong/ts-loader
     extensions: ['.ts', '.js', '.html']
   },
   module: {
@@ -92,4 +127,4 @@ const extensionConfig = {
     minimize: false, // Disable minification for the entire bundle
   },
 };
-module.exports = [ extensionConfig ];
+module.exports = [dictionaryConfig, extensionConfig];

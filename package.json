@@ -222,7 +222,6 @@
     "eslint": "^8.52.0",
     "glob": "^10.3.10",
     "html-loader": "^4.2.0",
-    "isbinaryfile": "^5.0.2",
     "mocha": "^10.2.0",
     "ts-loader": "^9.5.0",
     "typescript": "^5.2.2",
@@ -230,6 +229,7 @@
     "webpack-cli": "^5.1.4"
   },
   "dependencies": {
-    "@types/js-yaml": "^4.0.9"
+    "@types/js-yaml": "^4.0.9",
+    "isbinaryfile": "^5.0.2"
   }
 }
