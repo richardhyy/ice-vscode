@@ -71,6 +71,11 @@ As FlowChat is in early development, you may encounter bugs or instability. If y
 
 ## Release Notes
 
+### 0.3.0
+
+- Added attachment support for chat messages
+- Fixed an issue where the chat view would be reloaded when switching back from other panels
+
 ### 0.2.2
 
 - Fixed an issue where some tags were not rendered correctly in the chat view

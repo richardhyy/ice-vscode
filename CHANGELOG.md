@@ -1,8 +1,11 @@
 # Change Log
 
-All notable changes to the "flowchat" extension will be documented in this file.
+## [0.3.0] - 2024-04-02
+### Added
+- Attachment support for chat messages
 
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+### Fixed
+- Issue where the chat view would be reloaded when switching back from other panels
 
 ## [0.2.2] - 2024-03-29
 ### Fixed
