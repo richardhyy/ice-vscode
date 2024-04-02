@@ -899,7 +899,7 @@ hr {
 }
 
 @media (max-width: 600px) {
-    .message-node {
+    .message-content {
         max-width: 100%;
     }
 }
