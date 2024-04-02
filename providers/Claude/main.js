@@ -179,6 +179,22 @@ process.on('message', (message) => {
         let jsonBlob = '';
 
         for (const line of lines) {
+          try {
+            if (line.startsWith('{"')) {
+              // Sample: {"type":"error","error":{"type":"invalid_request_error","message":"'claude-2.1' does not support image input."}}
+              data = JSON.parse(line);          
+              if (data.error) {
+                process.send({
+                  type: 'error',
+                  requestID: requestID,
+                  error: data.error.message
+                });
+              }
+            }
+          } catch (error) {
+            // Ignore the error
+          }
+
           if (line.startsWith('event: ')) {
             if (event !== null && data !== null) {
               responseData = '';
