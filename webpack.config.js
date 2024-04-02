@@ -48,6 +48,24 @@ const dictionaryConfig = {
   },
 };
 
+// Webview configuration
+const webviewConfig = {
+  target: 'node',
+  mode: 'none',
+  entry: './webview/main.js',
+  output: {
+    path: path.resolve(__dirname, 'dist_webview'),
+    filename: '[name].js',
+    libraryTarget: 'commonjs2'
+  },
+  resolve: {
+    extensions: ['.js']
+  },
+  optimization: {
+    minimize: true,
+  },
+};
+
 /** @type WebpackConfig */
 const extensionConfig = {
   target: 'node',
@@ -64,9 +82,9 @@ const extensionConfig = {
         {
           from: './dist_providers',
           to: 'providers',
-        }
-      ]
-    })
+        },
+      ],
+    }),
   ],
   externals: {
     vscode: 'commonjs vscode'
@@ -87,33 +105,32 @@ const extensionConfig = {
       },
       {
         test: /\.html$/i,
-        loader: "html-loader",
+        loader: 'html-loader',
         options: {
           preprocessor: async (content, loaderContext) => {
-              const $ = require('cheerio').load(content);
-              const fs = require('fs');
-              const path = require('path');
+            const $ = require('cheerio').load(content);
+            const fs = require('fs');
+            const path = require('path');
+  
+            const read = (p) => fs.readFileSync(path.resolve(loaderContext.context, p), 'utf8');
+  
+            try {
+              $('script').each(function () {
+                if ($(this).attr('src')) {
+                  $(this).text(read('../dist_webview/' + $(this).attr('src')).toString());
+                  $(this).removeAttr('src');
+                }
+              });
+  
+              $('link[rel="stylesheet"]').replaceWith(function () {
+                  return $('<style>').text(read($(this).attr("href")).toString());
+              });
+            } catch (error) {
+                await loaderContext.emitError(error);
+                return content;
+            }
 
-              const read = (p) => fs.readFileSync(path.resolve(loaderContext.context, p));
-
-              try {
-                  $('script').each(function () {
-                    if ($(this).attr("src")) {
-                      $(this).text(read($(this).attr("src")).toString());
-                      $(this).removeAttr("src");
-                    }
-                  });
-
-                  $('link[rel="stylesheet"]').replaceWith(function () {
-                      return $('<style>').text(read($(this).attr("href")).toString());
-                  });
-
-              } catch (error) {
-                  await loaderContext.emitError(error);
-                  return content;
-              }
-
-              return $.html();
+            return $.html();
           }
         },
       },
@@ -127,4 +144,4 @@ const extensionConfig = {
     minimize: false, // Disable minification for the entire bundle
   },
 };
-module.exports = [dictionaryConfig, extensionConfig];
+module.exports = [dictionaryConfig, webviewConfig, extensionConfig];

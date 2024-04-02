@@ -1,6 +1,7 @@
 out
 dist
 dist_providers
+dist_webview
 node_modules
 .vscode-test/
 *.vsix
