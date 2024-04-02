@@ -77,6 +77,21 @@
 
       let globalUndoLock = null;
 
+      let _editingMessageAttachments = {}; // {messageID: [attachment1, attachment2, ...]}
+
+      function updateAttachments(messageID, attachments, append = false, attachmentContainerElement = null) {
+        // Update the variable
+        if (append) {
+          _editingMessageAttachments[messageID] = (_editingMessageAttachments[messageID] || []).concat(attachments);
+        } else {
+          // Replace the attachments
+          _editingMessageAttachments[messageID] = attachments;
+        }
+
+        // Update the UI
+        _renderAttachments(messageID, _editingMessageAttachments[messageID], true, attachmentContainerElement);
+      }
+
       function updateFlatMessages(message) {
         delete message.action;
         flatMessages[message.id] = message;
@@ -164,6 +179,7 @@
             id: Date.now(),
             role: "user",
             content,
+            attachments: _editingMessageAttachments[message.id],
             parentID: message.parentID,
             timestamp: new Date().toISOString(),
           };
@@ -171,11 +187,13 @@
         } else {
           // Edit the message if it's an existing message
           message.content = content;
+          message.attachments = _editingMessageAttachments[message.id] || [];
           vscode.postMessage({
             type: "editMessage",
             messageID: message.id,
             updates: {
               content: content,
+              attachments: message.attachments,
             }
           });
         }
@@ -184,6 +202,8 @@
         scanMessageTree();
         activePath = getPathWithMessage(message.id);
         renderConversation();
+
+        delete _editingMessageAttachments[message.id];
 
         if (message.role === "user" && (!messageIDWithChildren[message.id] || messageIDWithChildren[message.id].length === 0)) {
           // Send the message if it's a user message and has no children, i.e. it's the last message in the conversation
@@ -300,6 +320,60 @@
         }
       }
 
+      function _renderAttachments(messageID, attachments, editing, attachmentContainerElement = null) {
+        const attachmentContainer = attachmentContainerElement ? attachmentContainerElement : document.querySelector(
+          `.attachment-container[data-id="${messageID}"]`
+        );
+        if (!attachmentContainer) {
+          console.error("Attachment container not found for message", messageID);
+          return;
+        }
+
+        attachmentContainer.innerHTML = "";
+
+        for (const attachment of attachments) {
+          const file = document.createElement("div");
+          file.classList.add("file");
+          file.dataset.attachmentID = attachment.id;
+          const vscodeContext = {
+            isAttachment: true,
+          }
+          if (editing) {
+            vscodeContext.editibleAttachment = true;
+          }
+          vscodeContext.revealableAttachment = !attachment.url.startsWith("data");
+          file.dataset.vscodeContext = JSON.stringify(vscodeContext);
+          file.title = attachment.name + (attachment.url.startsWith("data") ? ` (Embedded)` : ` (${attachment.url})`);
+
+          const fileName = document.createElement("div");
+          fileName.classList.add("file-name");
+          fileName.textContent = attachment.name;
+
+          const extension = attachment.name.split('.').pop();
+
+          const extensionLabel = document.createElement("div");
+          extensionLabel.classList.add("file-extension");
+          extensionLabel.textContent = extension;
+
+          if (attachment.url.startsWith("data:image/")) {
+            // Image attachment
+            const filePreview = document.createElement("div");
+            filePreview.classList.add("file-preview");
+
+            const image = document.createElement("img");
+            image.src = attachment.url;
+            image.alt = attachment.name;
+
+            filePreview.appendChild(image);
+            file.appendChild(filePreview);
+          } else {
+            file.appendChild(fileName);
+          }
+          file.appendChild(extensionLabel);
+          attachmentContainer.appendChild(file);
+        }
+      }
+
       function _renderBubbleMessage(messageNode, message, clipContent, editing) {
         if (editing) {
           const cancelButtonElement = document.createElement("button");
@@ -317,7 +391,13 @@
         messageContent.classList.add("message-content");
         messageNode.appendChild(messageContent);
 
+        const attachmentContainer = document.createElement("div");
+        attachmentContainer.classList.add("attachment-container");
+        attachmentContainer.dataset.id = message.id;
+
         if (editing) {
+          messageContent.classList.add("editing");
+
           const submitButtonElement = document.createElement("button");
           submitButtonElement.className =
             "edit-operation-button edit-operation-button-submit";
@@ -335,7 +415,9 @@
           });
           messageNode.appendChild(submitButtonElement);
           
-          messageContent.classList.add("message-content-editing");
+          const messageContentEditing = document.createElement("div");
+          messageContentEditing.classList.add("message-content-editing");
+          messageContent.appendChild(messageContentEditing);
 
           const inputElement = document.createElement("textarea");
           inputElement.dataset.id = message.id;
@@ -385,7 +467,7 @@
             });
           });
 
-          messageContent.append(inputElement);
+          messageContentEditing.append(inputElement);
 
           if (message.role === "user") {
             // Attachment button
@@ -394,22 +476,38 @@
             attachmentButton.innerHTML = ICON_PAPERCLIP;
             attachmentButton.title = "Attach an image/file";
             attachmentButton.addEventListener("click", function () {
+              let configBaseMessageID = message.id;
+              if (message.isShadow) {
+                // A shadow message is not in the `flatMessages` yet, so we need to find the base message to get the config
+                configBaseMessageID = message.parentID;
+              }
+              const config = getMessageConfig(configBaseMessageID);
+
               vscode.postMessage({
                 type: "selectAttachment",
                 messageID: message.id,
+                providerID: config.Provider || currentProvider,
               });
             });
-            messageContent.appendChild(attachmentButton);
+            messageContentEditing.appendChild(attachmentButton);
+
+            // Attachment list
+            messageContent.appendChild(attachmentContainer);
+            updateAttachments(message.id, message.attachments || [], false, attachmentContainer);
           }
         } else {  // Not editing
           const renderedContent = _renderMarkdown(message.content + (message.incomplete && message.content.length === 0 ? "..." : ""), message.role === "user");
+          const markdownContent = document.createElement("div");
+          markdownContent.classList.add("markdown-content");
+          markdownContent.innerHTML = renderedContent;
+          messageContent.appendChild(markdownContent);
           if (clipContent) {
             const clippedContent = document.createElement("div");
             clippedContent.classList.add("clipped-content");
             clippedContent.innerHTML = renderedContent
-            messageContent.appendChild(clippedContent);
+            markdownContent.appendChild(clippedContent);
           } else {
-            messageContent.innerHTML = renderedContent
+            markdownContent.innerHTML = renderedContent
           }
           
           if (!message.incomplete) {
@@ -434,6 +532,11 @@
               });
               codeBlock.appendChild(copyButton);
             }
+          }
+
+          if (message.attachments) {
+            messageContent.appendChild(attachmentContainer);
+            _renderAttachments(message.id, message.attachments, false, attachmentContainer);
           }
         }
       }
@@ -974,6 +1077,14 @@
           return;
         }
 
+        let attachmentID;
+        for (const element of cursorHoverElements) {
+          if (element.classList.contains("file")) {
+            attachmentID = element.dataset.attachmentID;
+            break;
+          }
+        }
+
         switch (operation) {
           case "duplicate":
             const message = flatMessages[messageID];
@@ -1043,6 +1154,63 @@
             renderConversation();
             toggleEdit(id);
             break;
+          case "revealAttachment":
+            if (attachmentID) {
+              let attachments = [];
+              if (_editingMessageAttachments[messageID]) {
+                attachments = _editingMessageAttachments[messageID];
+              } else {
+                attachments = flatMessages[messageID].attachments;
+              }
+              const attachment = attachments.find(
+                (attachment) => String(attachment.id) === attachmentID
+              );
+              if (attachment) {
+                vscode.postMessage({
+                  type: "revealFile",
+                  path: attachment.url,
+                });
+              } else {
+                console.error("Attachment not found", attachmentID);
+              }
+            } else {
+              console.error("No attachment ID found");
+            }
+            break;
+          case "removeAttachment":
+            if (attachmentID) {
+              let attachments;
+              let isShadow = false;
+              if (_editingMessageAttachments[messageID]) {
+                // If the message is a shadow message, get the attachments from the editing attachments
+                attachments = _editingMessageAttachments[messageID];
+                isShadow = true;
+              } else {
+                attachments = flatMessages[messageID].attachments;
+              }
+              const attachmentIndex = attachments.findIndex(
+                (attachment) => String(attachment.id) === attachmentID
+              );
+              if (attachmentIndex !== -1) {
+                attachments.splice(attachmentIndex, 1);
+                if (!isShadow) {
+                  // Save the attachment changes if the message is not a shadow message
+                  vscode.postMessage({
+                    type: "editMessage",
+                    messageID: messageID,
+                    updates: {
+                      attachments: attachments,
+                    },
+                  });
+                }
+                updateAttachments(messageID, attachments, false);
+              } else {
+                console.error("Attachment not found", attachmentID);
+              }
+            } else {
+              console.error("No attachment ID found");
+            }
+            break;
           default:
             console.error("Unknown context menu operation", operation);
         }
@@ -1085,6 +1253,11 @@
                 type: message.type,
               });
             }
+            break;
+          case "addAttachments":
+            const messageID = message.messageID;
+            const attachmentMetas = message.attachmentMetas;
+            updateAttachments(messageID, attachmentMetas, true);
             break;
           case "providerIDs":
             availableProviders = message.providerIDs;

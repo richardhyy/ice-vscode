@@ -90,6 +90,16 @@
         "category": "Chat View Context"
       },
       {
+        "command": "chat-view.message.attachment.reveal",
+        "title": "Reveal",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.attachment.remove",
+        "title": "Remove",
+        "category": "Chat View Context"
+      },
+      {
         "command": "chat-view.provider.open-panel",
         "title": "Open Provider Panel"
       }
@@ -121,6 +131,16 @@
     ],
     "menus": {
       "webview/context": [
+        {
+          "command": "chat-view.message.attachment.reveal",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && isAttachment && revealableAttachment",
+          "group": "attachment_operations@0"
+        },
+        {
+          "command": "chat-view.message.attachment.remove",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && isAttachment && editibleAttachment",
+          "group": "attachment_operations@1"
+        },
         {
           "command": "chat-view.message.copy",
           "when": "webviewId == chat-view.editor && webviewSection == 'messageNode'",
@@ -190,6 +210,7 @@
     "test": "node ./out/test/runTest.js"
   },
   "devDependencies": {
+    "@types/mime-types": "^2.1.4",
     "@types/mocha": "^10.0.3",
     "@types/node": "18.x",
     "@types/vscode": "^1.84.0",
@@ -201,6 +222,7 @@
     "eslint": "^8.52.0",
     "glob": "^10.3.10",
     "html-loader": "^4.2.0",
+    "isbinaryfile": "^5.0.2",
     "mocha": "^10.2.0",
     "ts-loader": "^9.5.0",
     "typescript": "^5.2.2",

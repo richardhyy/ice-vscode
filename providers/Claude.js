@@ -4,6 +4,8 @@
 // @description         FlowChat provider for Claude by Anthropic. System prompt is supported by Claude 2.1 (or later). Docs: https://docs.anthropic.com/claude/docs. This script is not affiliated with Anthropic.
 // @author              Alan Richard
 // @license             MIT
+// @_needAttachmentPreprocessing  false
+// @_attachmentFilter   { "Images": ["jpg", "jpeg", "png", "gif", "webp"], "Documents": ["txt", "md"], "Others": ["*"] }
 // @variableSecure      APIKey
 // @variableRequired    Model=claude-3-opus-20240229
 // @variableRequired    MaxTokensToSample=4000
@@ -13,6 +15,8 @@
 // ==/FlowChatProvider==
 
 const https = require('https');
+const fs = require('fs');
+const isBinaryFileSync = require("isbinaryfile").isBinaryFileSync;
 
 function debug(message) {
   process.send({
@@ -32,10 +36,74 @@ process.on('message', (message) => {
     debug(`Received message trail: ${JSON.stringify(messageTrail)}\n`);
     debug(`Received config: ${JSON.stringify(config)}\n`);
 
-    const messages = messageTrail.map((message) => ({
-      role: message.role,
-      content: message.content,
-    }));
+    const messages = messageTrail.map((message) => {
+      const processedMessage = {
+        role: message.role,
+        content: [
+          {
+            type: 'text',
+            text: message.content
+          }
+        ]
+      };
+
+      if (message.attachments) {
+        for (const attachment of message.attachments) {
+          if (attachment.url.startsWith('data:')) {
+            // Base64 encoded
+            const mimeType = attachment.url.split(';')[0].split(':')[1];
+            const base64Data = attachment.url.split(',')[1];
+
+            if (mimeType.startsWith('image/')) {
+              processedMessage.content.push({
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: mimeType,
+                  data: base64Data
+                }
+              });
+            }
+          } else {
+            // URL
+            const buffer = fs.readFileSync(attachment.url);
+            
+            // Check if the file is binary
+            const isBinary = isBinaryFileSync(buffer);
+            if (!isBinary) {
+              processedMessage.content[0].text = `<${attachment.name}>\n${buffer.toString()}\n</${attachment.name}>\n${processedMessage.content[0].text}`;
+            } else {
+              // Check if the file is a supported image
+              let extension = attachment.url.split('.').pop().toLowerCase();
+              if (extension === 'jpg') {
+                extension = 'jpeg';
+              }
+
+              if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(extension)) {
+                const base64Data = buffer.toString('base64');
+                processedMessage.content.push({
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: `image/${extension}`,
+                    data: base64Data
+                  }
+                });
+              } else {
+                processedMessage.content[0].text = `<${attachment.name}>\nUnsupported file type\n</${attachment.name}>\n${processedMessage.content[0].text}`;
+                process.send({
+                  type: 'warning',
+                  requestID: requestID,
+                  content: `Unsupported attachment: ${attachment.name}`
+                });
+              }
+            }
+          }
+        }
+      }
+
+      return processedMessage;
+    });
 
     const requestBody = JSON.stringify({
       model: config.Model,

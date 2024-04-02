@@ -323,6 +323,9 @@ export class ProviderManager {
           this.pendingRequests.delete(requestID);
           vscode.window.showErrorMessage(`Provider ${providerID} Error: ${error}`);
         }
+      } else if (message.type === 'warning') {
+        console.warn(`Warning message from provider ${providerID}:`, message.content);
+        vscode.window.showWarningMessage(`Provider ${providerID} warning: ${message.content}`);
       } else if (message.type === 'debug') {
         console.log(`Debug message from provider ${providerID}:`, message.content);
       }    
@@ -389,7 +392,7 @@ export class ProviderManager {
 
         // Merge the config with the override
         let mergedConfig = { ...config.secureVariables, ...config.requiredVariables, ...config.optionalVariables, ...configOverride };
-      
+
         child.send({ type: 'getCompletion', requestID, messageTrail, config: mergedConfig });
 
         return requestID;

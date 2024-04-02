@@ -2,8 +2,10 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
+import * as mime from 'mime-types';
+const isBinaryFileSync = require("isbinaryfile").isBinaryFileSync;
 import { Provider, ProviderManager } from './providerManager';
-import { ChatAction, ChatHistoryManager, ChatMessage } from './chatHistoryManager';
+import { Attachment, ChatAction, ChatHistoryManager, ChatMessage } from './chatHistoryManager';
 import html from '../webview/chatview.html';
 import { InstantChatManager } from './instantChatManager';
 
@@ -101,6 +103,12 @@ export function activate(context: vscode.ExtensionContext) {
   }));
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.copy', async () => {
     postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'copy' });
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.attachment.reveal', async () => {
+    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'revealAttachment' });
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.attachment.remove', async () => {
+    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'removeAttachment' });
   }));
 
   // Handle undo/redo
@@ -252,8 +260,6 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
         case 'sendMessage':
           const configOverride = message.config;
           const providerID = configOverride?.Provider || this.currentProvider?.id;
-          const messageTrail: [ChatMessage] = message.messageTrail.filter((m: ChatMessage) => !m.role.startsWith('#'));
-          const latestMessage = messageTrail[messageTrail.length - 1];
 
           if (providerID === undefined) {
             vscode.window.showErrorMessage('Please select a provider before sending a message.');
@@ -267,6 +273,58 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           }
 
           updateProviderStatusBar(provider?.info['name'] || provider?.id);
+
+          const messageTrail: [ChatMessage] = message.messageTrail.filter((m: ChatMessage) => !m.role.startsWith('#'));
+
+          // Process the message attachments before passing to the provider
+          const needPreprocess = (provider?.info['_needAttachmentPreprocessing'] || 'true') === 'true';
+          let processedMessageTrail = messageTrail.map(message => {
+            if (message.attachments) {
+              message.attachments = message.attachments.map(attachment => {
+                // Convert messages' attachment URLs to absolute path
+                if (attachment.url.startsWith('data:') || attachment.url.startsWith('http')) {
+                  return attachment;
+                } else {
+                  return {
+                    ...attachment,
+                    url: attachment.url.startsWith("http") || fs.existsSync(attachment.url) ? attachment.url : path.join(path.dirname(chatFilePath), attachment.url),
+                  };
+                }
+              });
+            }
+
+            if (needPreprocess && message.attachments) {
+              // A provider can opt out of attachment preprocessing by setting `_needAttachmentPreprocessing` to false
+              // We assume the provider will handle the attachments by itself if it's set to false
+
+              // Or, we can preprocess the attachments here to ensure maximum compatibility
+              // Preprocess the attachment: skip binary files; read text files and insert into the message content
+              for (const attachment of message.attachments) {
+                let fileBuffer;
+
+                if (attachment.url.startsWith('data:')) {
+                  // Base64 encoded data
+                  const base64Data = attachment.url.split(',')[1];
+                  fileBuffer = Buffer.from(base64Data, 'base64');
+                } else {
+                  // Read text files
+                  fileBuffer = fs.readFileSync(attachment.url);
+                }
+
+                const isBinary = isBinaryFileSync(fileBuffer);
+                if (!isBinary) {
+                  message.content = `<${attachment.name}>\n${fileBuffer}\n</${attachment.name}>\n${message.content}`;
+                } else {
+                  message.content = `<${attachment.name}>\nUnsupported attachment\n</${attachment.name}>\n${message.content}`;
+                  vscode.window.showWarningMessage(`Attachment ${attachment.name} is a binary file and cannot be sent.`);
+                }
+              }
+
+              delete message.attachments;
+            }
+            return message;
+          });          
+          const latestMessage = processedMessageTrail[processedMessageTrail.length - 1];
 
           let newMessage: ChatMessage = {
             id: Date.now() + Math.floor(Math.random() * 1000),
@@ -285,7 +343,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             try {
               providerExecuting = provider;
               const requestID = await provider.getCompletion(
-                messageTrail,
+                processedMessageTrail,
                 configOverride,
                 (partialText: string) => {
                   // Streaming message from provider
@@ -367,6 +425,81 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           } else {
             console.log('No actions to redo');
           }
+          break;
+        case 'selectAttachment':
+          const targetProviderID = message.providerID || this.currentProvider?.id;
+          const targetProvider = await this.providerManager.getProviderByID(targetProviderID);
+          let filter = undefined;
+          if (targetProvider && targetProvider.info['_attachmentFilter']) {
+            filter = JSON.parse(targetProvider.info['_attachmentFilter']);
+          }
+
+          const attachmentPath = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectFolders: false,
+            canSelectMany: true,
+            openLabel: 'Select',
+            filters: filter,
+          });
+          if (attachmentPath && attachmentPath.length > 0) {
+            let attachmentMetas = [];
+
+            for (const attachment of attachmentPath) {
+              const basename = path.basename(attachment.fsPath);
+              const dirname = path.dirname(attachment.fsPath);
+              let meta: Attachment = {
+                id: Date.now() * 100 + Math.floor(Math.random() * 100),
+                name: basename,
+                url: '',
+              };
+              
+              if (!dirname.startsWith(path.dirname(chatFilePath))) { // Check if the attachment is outside the current folder
+                // Prompt the user to for copy to `.chat/attachments` folder, or save the absolute path, or save the BASE64 encoded data in the chat file
+                const action = await vscode.window.showQuickPick(
+                  ['Copy to ./.chat/attachments', 'Save Absolute Path', 'Save BASE64 Encoded Data', 'Skip'],
+                  { 
+                    placeHolder: 'Select an action for the attachment',
+                    title: `${basename} is outside the chat folder`,
+                  }
+                );
+                if (action === 'Copy to ./.chat/attachments') {
+                  const attachmentFolder = path.join(path.dirname(chatFilePath), '.chat', 'attachments', path.basename(chatFilePath, '.chat'));
+                  if (!fs.existsSync(attachmentFolder)) {
+                    fs.mkdirSync(attachmentFolder, { recursive: true });
+                  }
+                  const newAttachmentPath = path.join(attachmentFolder, basename);
+                  fs.copyFileSync(attachment.fsPath, newAttachmentPath);
+
+                  // Update the final URL to the new and relative path
+                  meta.url = path.relative(path.dirname(chatFilePath), newAttachmentPath);
+                } else if (action === 'Save Absolute Path') {
+                  // Save the absolute path
+                  meta.url = attachment.fsPath;
+                } else if (action === 'Save BASE64 Encoded Data') {
+                  // Save the BASE64 encoded data
+                  const fileMimeType = mime.lookup(attachment.fsPath) || 'application/octet-stream';
+                  const encoded = fs.readFileSync(attachment.fsPath).toString('base64');
+                  meta.url = `data:${fileMimeType};base64,${encoded}`;
+                } else {
+                  // Skip the attachment
+                  continue;
+                }
+              } else {
+                // Save the relative path
+                meta.url = path.relative(path.dirname(chatFilePath), attachment.fsPath);
+              }
+              attachmentMetas.push(meta);
+            }
+
+            webviewPanel.webview.postMessage({ type: 'addAttachments', messageID: message.messageID, attachmentMetas: attachmentMetas });
+          }
+          break;
+        case 'revealFile':
+          let revealPath = message.path;
+          if (!path.isAbsolute(revealPath)) {
+            revealPath = path.join(path.dirname(chatFilePath), revealPath);
+          }
+          vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(revealPath));
           break;
         case 'cancelRequest':
           if (providerExecuting) {

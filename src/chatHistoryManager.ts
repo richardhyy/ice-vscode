@@ -3,10 +3,17 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { UndoRedoManager } from './undoRedoManager';
 
+export interface Attachment {
+  id: number;
+  name: string;
+  url: string;  // Can be a local or remote URL, or a `data:` URL
+}
+
 export interface ChatMessage {
   id: number;
   role: 'user' | 'assistant' | '#config' | '#head' | string;
   content: string;
+  attachments?: Attachment[];
   customFields?: Record<string, any>;
   parentID: number | null;
   timestamp: string;
