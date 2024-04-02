@@ -79,7 +79,7 @@ process.on('message', (message) => {
           requestID: requestID,
           error: data.error.message
         });
-      } else if (data.object === 'chat.completion') {
+      } else if (data.choices) {
         if (data.choices.length === 0) {
           debug('No response\n');
           process.send({
