@@ -499,7 +499,6 @@
           const renderedContent = _renderMarkdown(message.content + (message.incomplete && message.content.length === 0 ? "..." : ""), message.role === "user");
           const markdownContent = document.createElement("div");
           markdownContent.classList.add("markdown-content");
-          markdownContent.innerHTML = renderedContent;
           messageContent.appendChild(markdownContent);
           if (clipContent) {
             const clippedContent = document.createElement("div");
