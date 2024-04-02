@@ -24,6 +24,7 @@ FlowChat is a flexible, easy-to-use VSCode extension that allows users to experi
   - Resend/regenerate
   - Inline configuration editing and switching
   - Changes are saved to the `.chat` file
+- Attachments support for multimodal models
 - Instant Chat feature for quickly chatting with LLMs
 - Create custom LLM providers using JavaScript
 - Configure API keys and settings for built-in providers
@@ -70,6 +71,12 @@ As FlowChat is in early development, you may encounter bugs or instability. If y
 - UI improvements
 
 ## Release Notes
+
+### 0.3.1
+
+- Fixed an issue where chat providers were not self-contained, preventing some providers from working
+- Improved error handling for the Anthropic Claude provider
+- OpenAI provider now has better compatibility with third-party API providers
 
 ### 0.3.0
 

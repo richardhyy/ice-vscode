@@ -1,5 +1,13 @@
 # Change Log
 
+## [0.3.1] - 2024-04-02
+### Fixed
+- Chat providers not self-contained which prevented some providers from working
+
+### Changed
+- Improved Anthropic Claude provider's error handling
+- OpenAI provider now has better compatibility with third-party API providers
+
 ## [0.3.0] - 2024-04-02
 ### Added
 - Attachment support for chat messages
