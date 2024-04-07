@@ -100,6 +100,16 @@
         "category": "Chat View Context"
       },
       {
+        "command": "chat-view.message.editor.createSnippet",
+        "title": "Create Snippet",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.editor.manageSnippets",
+        "title": "Manage Snippets",
+        "category": "Chat View Context"
+      },
+      {
         "command": "chat-view.provider.open-panel",
         "title": "Open Provider Panel"
       }
@@ -140,6 +150,16 @@
           "command": "chat-view.message.attachment.remove",
           "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && isAttachment && editibleAttachment",
           "group": "attachment_operations@1"
+        },
+        {
+          "command": "chat-view.message.editor.createSnippet",
+          "when": "webviewId == chat-view.editor && isEditor",
+          "group": "editor_operations@0"
+        },
+        {
+          "command": "chat-view.message.editor.manageSnippets",
+          "when": "webviewId == chat-view.editor && isEditor",
+          "group": "editor_operations@1"
         },
         {
           "command": "chat-view.message.copy",

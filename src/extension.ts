@@ -4,15 +4,17 @@ import * as path from 'path';
 import * as yaml from 'js-yaml';
 import * as mime from 'mime-types';
 const isBinaryFileSync = require("isbinaryfile").isBinaryFileSync;
+import html from '../webview/chatview.html';
 import { Provider, ProviderManager } from './providerManager';
 import { Attachment, ChatAction, ChatHistoryManager, ChatMessage } from './chatHistoryManager';
-import html from '../webview/chatview.html';
 import { InstantChatManager } from './instantChatManager';
+import { SnippetManager } from './snippetManager';
 
 let extensionContext: vscode.ExtensionContext;
 let chatViewProvider: ChatViewProvider;
 let instantChatManager: InstantChatManager;
 let statusBarItem: vscode.StatusBarItem;
+let snippetManager: SnippetManager;
 
 function postMessageToCurrentWebview(message: any) {
   if (chatViewProvider.activeWebview) {
@@ -22,6 +24,7 @@ function postMessageToCurrentWebview(message: any) {
 
 export function activate(context: vscode.ExtensionContext) {
   extensionContext = context;
+  snippetManager = new SnippetManager(context);
   chatViewProvider = new ChatViewProvider(context);
   instantChatManager = new InstantChatManager(context);
 
@@ -109,6 +112,17 @@ export function activate(context: vscode.ExtensionContext) {
   }));
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.attachment.remove', async () => {
     postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'removeAttachment' });
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.editor.createSnippet', async () => {
+    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'createSnippet' });
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.editor.manageSnippets', async () => {
+    await snippetManager.showSnippetPicker();
+
+    if (chatViewProvider.activeWebview) {
+      // Update the snippets in the chat view
+      chatViewProvider.loadSnippets(chatViewProvider.activeWebview);
+    }
   }));
 
   // Handle undo/redo
@@ -211,6 +225,11 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
     }
   }
 
+  async loadSnippets(webviewPanel: vscode.WebviewPanel): Promise<void> {
+    const snippets = snippetManager.getAllSnippets();
+    webviewPanel.webview.postMessage({ type: 'loadSnippets', snippets: snippets });
+  }
+
   private async loadChatHistory(webviewPanel: vscode.WebviewPanel, chatHistoryManager: ChatHistoryManager): Promise<void> {
     const actions: ChatAction[] = await chatHistoryManager.loadActionHistory();
     webviewPanel.webview.postMessage({ type: 'loadActions', actions: actions });
@@ -236,6 +255,8 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
       if (webviewPanel.active && webviewPanel.visible) {
         this.activeWebview = webviewPanel;
         statusBarItem.show();
+
+        this.loadSnippets(webviewPanel);
       } else if (this.activeWebview === webviewPanel) {
         this.activeWebview = null;
         statusBarItem.hide();
@@ -248,6 +269,8 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
     webviewPanel.webview.html = this.getWebViewContent(webviewPanel.webview);
 
     await this.loadChatHistory(webviewPanel, chatHistoryManager);
+
+    this.loadSnippets(webviewPanel);
 
     let providerExecuting: Provider | null = null;
 
@@ -518,6 +541,15 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             break;
           }
           webviewPanel.webview.postMessage({ type: 'providerConfig', providerID: message.providerID, configKeys: providerEntity.configKeys });
+          break;
+        case 'createSnippet':
+          if (!message.content) {
+            vscode.window.showErrorMessage('Select text to create a snippet.');
+            break;
+          }
+          const snippetText = message.content;
+          await snippetManager.createSnippet(snippetText);
+          this.loadSnippets(webviewPanel);
           break;
       }
     });

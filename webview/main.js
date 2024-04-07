@@ -20,6 +20,7 @@ let activePath = [];
 let currentProvider = null;
 let availableProviders = [];
 let providerConfigKeys = {}; // {providerID: [configKey1, configKey2, ...]}
+let snippets = {}; // {completion: content}
 
 let globalUndoLock = null;
 
@@ -349,6 +350,23 @@ function _renderAttachments(messageID, attachments, editing, attachmentContainer
   }
 }
 
+function _editorAutoComplete(context) {
+  const before = context.matchBefore(/\/(\w+)/);
+  if (!before) {
+    return null;
+  }
+
+  return {
+    from: before.from,
+    options: Object.entries(snippets).map(([completion, content]) => ({
+      label: "/" + completion,
+      apply: content,
+      type: "snippet",
+    })),
+    validFor: /^\s*$/.test(before.text),
+  };
+}
+
 function _renderBubbleMessage(messageNode, message, clipContent, editing) {
   if (editing) {
     const cancelButtonElement = document.createElement("button");
@@ -398,6 +416,7 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
     const codeMirrorContainer = document.createElement("div");
     codeMirrorContainer.classList.add("codemirror-container");
     codeMirrorContainer.dataset.id = message.id;
+    codeMirrorContainer.dataset.vscodeContext = JSON.stringify({ isEditor: true });
     messageContentEditing.appendChild(codeMirrorContainer);
 
     const codeMirrorView = new EditorView({
@@ -405,7 +424,7 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
         doc: message.content,
         extensions: [
           minimalSetup,
-          // autocompletion,
+          autocompletion({ override: [_editorAutoComplete] }),
           Prec.highest(
             keymap.of([
               {
@@ -1214,6 +1233,17 @@ function contextMenuOperation(operation, subOperation) {
         console.error("No attachment ID found");
       }
       break;
+    case "createSnippet":
+      const editor = EditorView.findFromDOM(document.querySelector(`.message-container[data-id="${messageID}"]`));
+      if (editor) {
+        const selectedText = editor.state.sliceDoc(editor.state.selection.main.from, editor.state.selection.main.to);
+        vscode.postMessage({
+          type: "createSnippet",
+          content: selectedText,
+        });
+        console.log("Selected text", selectedText);
+      }
+      break;
     default:
       console.error("Unknown context menu operation", operation);
   }
@@ -1267,6 +1297,9 @@ window.addEventListener("message", (event) => {
       break;
     case "providerConfig":
       providerConfigKeys[message.providerID] = message.configKeys;
+      break;
+    case "loadSnippets":
+      snippets = message.snippets;
       break;
     default:
       console.error("Unknown message type", message.type);
