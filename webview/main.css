@@ -1,19 +1,59 @@
 :root {
-    --user-message-background-color: hsl(25, 20%, 88%);
-    --assistant-message-background-color: hsl(25, 10%, 100%);
-    --user-message-border-color: hsla(25, 20%, 80%, 0.2);
-    --assistant-message-border-color: hsla(25, 10%, 80%, 0.2);
-    --accent-color: #9A806D;
-    --primary-color: #453728;
-    --secondary-color: #AAAAAA;
-    --tertiary-color: #E7E0DB;
-    --quaternary-color: #D3E0DB;
-    --light-gray: #f0f0f0;
-    --dark-gray: #333;
-    --code-block: hsla(26, 19%, 80%, 0.2);
-    --edit-operation-color: #fff;
-    --shadow-color: rgba(82, 78, 76, 0.15);
-    --shadow-color-soft: rgba(82, 78, 76, 0.05);
+    --user-message-background-color: var(--vscode-button-background);
+    --user-message-text-color: var(--vscode-button-foreground);
+    --assistant-message-background-color: var(--vscode-editorWidget-background);
+    --assistant-message-text-color: var(--vscode-editorWidget-foreground);
+    --user-message-border-color: var(--vscode-editorWidget-border);
+    --assistant-message-border-color: var(--vscode-editorWidget-border);
+    --config-card-background-color: var(--vscode-editorWidget-background);
+    --accent-color: var(--vscode-focusBorder);
+    --primary-color: var(--vscode-editor-foreground);
+    --secondary-color: var(--vscode-button-secondaryBackground);
+    --tertiary-color: var(--vscode-button-secondaryHoverBackground);
+    --quaternary-color: var(--vscode-editorWidget-border);
+    --light-gray: var(--vscode-editorHoverWidget-statusBarBackground);
+    --dark-gray: var(--vscode-editorHoverWidget-border);
+    --code-block: var(--vscode-textCodeBlock-background);
+    --shadow-color: var(--vscode-widget-shadow);
+    --shadow-color-soft: var(--vscode-scrollbar-shadow);
+    --link-color: var(--vscode-textLink-foreground);
+    --blockquote-color: var(--vscode-textBlockQuote-background);
+    --blockquote-border-color: var(--vscode-textBlockQuote-border);
+    --code-color: var(--vscode-textPreformat-foreground);
+    --table-border-color: var(--vscode-editorWidget-border);
+    --custom-tag-color: var(--vscode-editor-foreground);
+    --custom-tag-indicator-color: var(--vscode-editorLightBulb-foreground);
+    --button-background-color: var(--vscode-button-background);
+    --button-text-color: var(--vscode-button-foreground);
+    --button-primary-background-color: var(--vscode-button-background);
+    --config-key-color: var(--vscode-settings-headerForeground);
+    --config-key-separator-color: var(--vscode-editorWidget-border);
+    --config-value-color: var(--vscode-settings-dropdownForeground);
+    --config-token-color: var(--vscode-editorWidget-foreground);
+    --editing-message-border-color: var(--shadow-color);
+    --editing-message-focus-border-color: var(--vscode-inputOption-activeBorder);
+    --attachment-button-border-color: var(--editing-message-border-color);
+    --attachment-button-icon-color: var(--shadow-color);
+    --attachment-button-hover-background-color: var(--accent-color);
+    --attachment-button-hover-icon-color: var(--vscode-button-foreground);
+    --attachment-button-focus-border-color: var(--editing-message-focus-border-color);
+    --attachment-button-focus-icon-color: var(--secondary-color);
+    --file-background-color: var(--vscode-editorWidget-background);
+    --file-border-color: var(--vscode-editorWidget-border);
+    --file-icon-color: var(--vscode-editorLightBulb-foreground);
+    --file-name-color: var(--vscode-editor-foreground);
+    --file-extension-color: var(--vscode-descriptionForeground);
+    --sibling-switcher-color: var(--vscode-editorWidget-foreground);
+    --edit-operation-button-cancel-background-color: var(--vscode-editorWidget-border);
+    --edit-operation-button-submit-background-color: var(--accent-color);
+    --edit-operation-foreground-color: var(--vscode-button-foreground);
+    --message-divider-color: var(--vscode-editorWidget-border);
+    --branch-switch-button-background-color: var(--vscode-button-secondaryBackground);
+    --branch-switch-button-icon-color: var(--vscode-button-foreground);
+    --progress-label-color: var(--vscode-editor-foreground);
+    --progressing-indicator-dot-color: var(--vscode-editor-foreground);
+    --progress-cancel-button-background-color: var(--vscode-button-secondaryBackground);
+
     --fs-body: 1em;
     --fs-footnote: 0.8em;
     --padding: 14px;
@@ -27,26 +67,8 @@
     --default-cubic-bezier: cubic-bezier(.42, 0, .58, 1);
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --user-message-background-color: hsl(210, 16%, 12%);
-        --assistant-message-background-color: hsl(18, 11%, 36%);
-        --user-message-border-color: hsla(210, 16%, 12%, 0.5);
-        --assistant-message-border-color: hsla(18, 11%, 36%, 0.5);
-        --accent-color: #675953;
-        --primary-color: #BAC2D7;
-        --secondary-color: #555555;
-        --tertiary-color: #1A1F24;
-        --quaternary-color: #2C1F24;
-        --light-gray: #0f0f0f;
-        --dark-gray: #ccc;
-        --code-block: hsla(0, 0%, 18%, 0.2);
-        --shadow-color: rgba(173, 177, 179, 0.15);
-    }
-}
-
 body, html {
-    color: var(--dark-gray);
+    color: var(--secondary-color);
     cursor: default;
     user-select: none;
     margin: 0;
@@ -95,7 +117,7 @@ h6::before {
 
 /* Headers, links, and blockquotes */
 a {
-    color: var(--primary-color);
+    color: var(--link-color);
     text-decoration: none;
 }
 
@@ -104,8 +126,8 @@ a:hover {
 }
 
 blockquote {
-    color: var(--dark-gray);
-    border-left: 4px solid var(--secondary-color);
+    color: var(--blockquote-color);
+    border-left: 4px solid var(--blockquote-border-color);
     padding-left: 1em;
     margin: 1em 0;
 }
@@ -117,14 +139,14 @@ ul, ol {
 
 /* Code blocks */
 code {
-    color: var(--dark-gray);
+    color: inherit;
     font-family: monospace;
     word-wrap: break-word;
 }
 
 pre {
     background-color: var(--code-block);
-    color: var(--dark-gray);
+    color: inherit;
     padding: 1em;
     white-space: pre-wrap;
     border-radius: var(--border-radius-large);
@@ -165,7 +187,6 @@ pre .copy-button {
     align-items: center;
     opacity: 0.5;
     transition: opacity 0.2s var(--default-cubic-bezier);
-    mix-blend-mode: multiply;
 }
 
 pre .copy-button:hover {
@@ -191,7 +212,7 @@ table {
 }
 
 table, th, td {
-    border: 1px solid var(--quaternary-color);
+    border: 1px solid var(--table-border-color);
 }
 
 th, td {
@@ -227,13 +248,13 @@ hr {
 
 .custom-tag {
     display: block;
-    color: var(--primary-color);
+    color: var(--custom-tag-color);
     margin: 0.2em 0;
 }
 
 .custom-tag .custom-tag-indicator {
     display: block;
-    color: var(--accent-color);
+    color: var(--custom-tag-indicator-color);
     font-weight: 400;
 }
 
@@ -269,7 +290,7 @@ hr {
 
 .header-content .creation-date {
     font-size: var(--fs-footnote);
-    color: var(--accent-color);
+    color: var(--secondary-color);
 }
 
 .message-container {
@@ -304,7 +325,7 @@ hr {
 
 .message-container.card .operation-group .button {
     background-color: var(--secondary-color);
-    color: var(--edit-operation-color);
+    color: var(--edit-operation-foreground-color);
     border: none;
     padding: 0.5em 1em;
     border-radius: var(--border-radius);
@@ -339,6 +360,7 @@ hr {
 .config-key-token {
     display: inline-block;
     background-color: var(--light-gray);
+    color: var(--config-token-color);
     border-radius: var(--border-radius);
     border: 1px solid var(--shadow-color);
     padding: 0.2em 0.5em;
@@ -346,10 +368,8 @@ hr {
 }
 
 .config-content {
-    background-color: rgba(82, 78, 76, 0.01);
-    border-top: 1px solid var(--shadow-color);
+    background-color: var(--config-card-background-color);
     padding: var(--padding);
-    border-bottom: 1px solid var(--shadow-color);
     display: flex;
     flex-direction: column;
     gap: 0.5em;
@@ -370,16 +390,16 @@ hr {
 }
 
 .config-content .config-key {
-    color: var(--secondary-color);
+    color: var(--config-key-color);
 }
 
 .config-content .config-key::after {
     content: ": ";
-    color: var(--primary-color);
+    color: var(--config-key-separator-color);
 }
 
 .config-content .config-value {
-    color: var(--primary-color);
+    color: var(--config-value-color);
 }
 
 .message-container.bubble {
@@ -493,7 +513,7 @@ hr {
     text-align: left;
     border-radius: var(--border-radius-xxlarge) var(--border-radius-xxlarge) var(--border-radius-large) var(--border-radius-xxlarge);
     background-color: var(--user-message-background-color);
-    border: 1px solid var(--user-message-border-color);
+    color: var(--user-message-text-color);
 }
 
 .message-content * {
@@ -506,8 +526,8 @@ hr {
     gap: 0.1em;
     padding: 14px 20px;
     border-radius: var(--border-radius-xxlarge) var(--border-radius-xxlarge) var(--border-radius-xxlarge) var(--border-radius-large);
-    border: 1px solid var(--assistant-message-border-color);
     background-color: var(--assistant-message-background-color);
+    color: var(--assistant-message-text-color);
     max-width: 61.8vw;
     line-height: 1.4;
     min-height: 1em;
@@ -525,7 +545,7 @@ hr {
     min-height: 10px;
     font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
     font-size: var(--fs-body);
-    color: var(--dark-gray);
+    color: var(--assistant-message-text-color);
     outline: none;
     vertical-align: middle;
 }
@@ -538,7 +558,7 @@ hr {
     border-radius: var(--border-radius-xlarge);
     border-width: 0.6px !important;
     border-style: solid !important;
-    border-color: var(--tertiary-color) !important;
+    border-color: var(--attachment-button-border-color) !important;
     background-color: transparent;
     width: 1.7em;
     height: 1.7em;
@@ -552,19 +572,23 @@ hr {
 }
 
 .message-content-editing .attachment-button:hover {
-    background-color: var(--tertiary-color);
+    background-color: var(--attachment-button-hover-background-color);
     filter: brightness(95%);
 }
 
 .message-content-editing .attachment-button:active {
-    background-color: var(--tertiary-color);
+    background-color: var(--attachment-button-hover-background-color);
     filter: brightness(88%);
+}
+
+.message-content-editing .attachment-button:hover svg {
+    color: var(--attachment-button-hover-icon-color) !important;
 }
 
 .message-content-editing .attachment-button svg {
     width: 62%;
     height: 62%;
-    color: var(--shadow-color);
+    color: var(--attachment-button-icon-color);
     transition: color 0.2s var(--default-cubic-bezier);
 }
 
@@ -575,13 +599,13 @@ hr {
 }
 
 .message-content.editing {
-    border: 1px solid var(--shadow-color);
+    border: 1px solid var(--editing-message-border-color);
     background: transparent !important;
     transition: border 0.1s var(--default-cubic-bezier);
 }
 
 .message-content.editing:focus-within {
-    border: 1px solid var(--accent-color) !important;
+    border: 1px solid var(--editing-message-focus-border-color) !important;
 }
 
 .message-content.editing:focus-within .attachment-button {
@@ -589,7 +613,15 @@ hr {
 }
 
 .message-content.editing:focus-within .attachment-button svg {
-    color: var(--accent-color) !important;
+    color: var(--attachment-button-focus-icon-color) !important;
+}
+
+.message-content-editing:focus-within .attachment-button:hover svg {
+    color: var(--attachment-button-hover-icon-color) !important;
+}
+
+.message-content-editing:focus-within .attachment-button:active svg {
+    color: var(--attachment-button-hover-icon-color) !important;
 }
 
 .attachment-container {
@@ -607,14 +639,12 @@ hr {
 .attachment-container .file {
     width: 3em;
     height: 4.85em;
-    background-color: var(--shadow-color-soft);
-    border: 1px solid var(--shadow-color-soft);
+    background-color: var(--file-background-color);
+    border: 1px solid var(--file-border-color);
     border-radius: var(--border-radius);
     padding: var(--padding);
-    margin: 5px 0;
+    margin: 0;
     position: relative;
-    box-shadow: 0 2px 4px var(--shadow-color-soft);
-    transition: transform 0.2s var(--default-cubic-bezier);
 }
 
 .attachment-container .file::before {
@@ -641,13 +671,9 @@ hr {
     border-color: transparent var(--assistant-message-background-color) transparent transparent;
 }
 
-.attachment-container .file:hover {
-    transform: translateY(-2px);
-}
-
 .attachment-container .file .file-icon {
     font-size: 48px;
-    color: var(--secondary-color);
+    color: var(--file-icon-color);
     margin-bottom: 10px;
 }
 
@@ -669,7 +695,7 @@ hr {
 .attachment-container .file .file-name {
     font-size: var(--fs-footnote);
     font-weight: 500;
-    color: var(--primary-color);
+    color: var(--file-name-color);
     word-wrap: break-word;
     text-align: center;
     margin-top: 0.5em;
@@ -684,7 +710,7 @@ hr {
 .attachment-container .file .file-extension {
     text-transform: uppercase;
     font-size: 1.6em;
-    color: var(--secondary-color);
+    color: var(--file-extension-color);
     opacity: 0.5;
     position: absolute;
     bottom: 2px;
@@ -696,7 +722,7 @@ hr {
 
 .sibling-switcher {
     font-size: var(--fs-footnote);
-    color: var(--secondary-color);
+    color: var(--sibling-switcher-color);
     transition: all 0.2s var(--default-cubic-bezier);
 }
 
@@ -718,22 +744,22 @@ hr {
 .edit-operation-button svg {
     width: 85%;
     height: 85%;
-    color: var(--edit-operation-color);
+    color: var(--edit-operation-foreground-color);
 }
 
 .edit-operation-button-cancel {
-    background-color: var(--shadow-color);
+    background-color: var(--edit-operation-button-cancel-background-color);
 }
 
 .edit-operation-button-submit {
-    background-color: var(--accent-color);
+    background-color: var(--edit-operation-button-submit-background-color);
 }
 
 .message-divider {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    color: var(--secondary-color);
+    color: var(--message-divider-color);
     font-size: var(--fs-footnote);
     padding-left: var(--padding);
     padding-right: var(--padding);
@@ -761,7 +787,7 @@ hr {
 
 .message-divider .branch-switch-button {
     border-radius: var(--border-radius);
-    background-color: var(--light-gray);
+    background-color: var(--branch-switch-button-background-color);
     width: 2.4em;
     height: 2em;
     border: none;
@@ -774,7 +800,7 @@ hr {
 .message-divider .branch-switch-button svg {
     width: 70%;
     height: 70%;
-    color: var(--secondary-color);
+    color: var(--branch-switch-button-icon-color);
 }
 
 .message-divider .divider {
@@ -807,14 +833,14 @@ hr {
 
 .progress-container .progress-label {
     font-size: var(--fs-footnote);
-    color: var(--secondary-color);
+    color: var(--progress-label-color);
 }
 
 .progress-cancel-button {
     border-radius: var(--border-radius-small);
     width: 0.75em;
     height: 0.75em;
-    background-color: var(--secondary-color);
+    background-color: var(--progress-cancel-button-background-color);
     border: none;
     margin-left: 0.3em;
     transform: translateY(1%);
@@ -837,7 +863,7 @@ hr {
 }
 
 .progressing-indicator .dot {
-    background-color: var(--secondary-color);
+    background-color: var(--progressing-indicator-dot-color);
     border-radius: 50%;
     width: 4px;
     height: 4px;
