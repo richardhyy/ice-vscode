@@ -1,5 +1,9 @@
 const icons = require('./icons.js');
 const marked = require('marked');
+import { EditorState, Prec } from "@codemirror/state";
+import { EditorView, keymap, placeholder } from "@codemirror/view";
+import { minimalSetup } from "codemirror";
+import { autocompletion } from "@codemirror/autocomplete";
 
 const vscode = acquireVsCodeApi();
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -390,55 +394,79 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
     messageContentEditing.classList.add("message-content-editing");
     messageContent.appendChild(messageContentEditing);
 
-    const inputElement = document.createElement("textarea");
-    inputElement.dataset.id = message.id;
-    inputElement.value = message.content;
-    inputElement.placeholder =
-      message.role === "user"
-        ? "Type a message..."
-        : "Type a response...";
-    inputElement.spellcheck = true;
-    inputElement.addEventListener("keydown", function (event) {
-      if (event.key === "Enter" && event.metaKey) {
-        event.preventDefault();
-        _handleMessageSubmit(event.target.value, message);
-      } else {
-        _textareaCheckAndHandleUndoRedo(event);
-      }
-    });
-    inputElement.addEventListener("input", function (event) {
-      auto_grow(event.target);
-    });
-    inputElement.addEventListener("focus", function (event) {
-      auto_grow(event.target);
-      globalUndoLock = message.id;
-    });
-    inputElement.addEventListener("blur", function (event) {
-      if (globalUndoLock === message.id) {
-        globalUndoLock = null;
-      }
-    });
+    // Create a CodeMirror editor instance
+    const codeMirrorContainer = document.createElement("div");
+    codeMirrorContainer.classList.add("codemirror-container");
+    codeMirrorContainer.dataset.id = message.id;
+    messageContentEditing.appendChild(codeMirrorContainer);
 
-    const inputRemoveObserver = new MutationObserver(function (mutations) {
-      mutations.forEach(function (mutation) {
-        if (mutation.type === 'childList') {
-          for (let i = 0; i < mutation.removedNodes.length; i++) {
-            const removedNode = mutation.removedNodes[i];
-            if (removedNode.tagName === 'TEXTAREA' && removedNode.dataset.id === message.id) {
-              if (globalUndoLock === message.id) {
-                // If the removed node is the input element that has the global undo lock
-                globalUndoLock = null;
+    const codeMirrorView = new EditorView({
+      state: EditorState.create({
+        doc: message.content,
+        extensions: [
+          minimalSetup,
+          // autocompletion,
+          Prec.highest(
+            keymap.of([
+              {
+                key: "Ctrl-Enter",
+                mac: "Cmd-Enter",
+                run: () => {
+                  _handleMessageSubmit(codeMirrorView.state.doc.toString(), message);
+                  return true;
+                }
+              }
+            ])
+          ),
+          placeholder(
+            message.role === "user" ? "Type a message..." : "Type a response..."
+          ),
+          EditorView.lineWrapping,
+          EditorView.theme({
+            "&": {
+              backgroundColor: "transparent",
+              fontFamily: "sans-serif",
+            },
+            ".cm-gutters": {
+              display: "none",
+            },
+            "&.cm-focused": {
+              outline: "none",
+            },
+            ".cm-line": {
+              color: "var(--assistant-message-text-color)",
+              fontFamily: "sans-serif",
+            },
+            ".cm-activeLine": {
+              backgroundColor: "transparent",
+            },
+            ".cm-content": {
+              caretColor: "var(--vscode-selection-background)",
+            },
+            ".cm-selectionBackground": {
+              backgroundColor: "var(--vscode-selection-background) !important",
+            },
+            ".cm-announced": {
+              /* If we don't set this, the height of the page will be confusingly changed */
+              /* Still looking for a better solution */
+              display: "none",
+            },
+          }),
+          EditorView.updateListener.of((update) => {
+            if (update.focusChanged) {
+              if (update.view.hasFocus) {
+                globalUndoLock = message.id;
               } else {
-                // Remove observer
-                inputRemoveObserver.disconnect();
+                if (globalUndoLock === message.id) {
+                  globalUndoLock = null;
+                }
               }
             }
-          }
-        }
-      });
+          }),
+        ],
+      }),
+      parent: codeMirrorContainer
     });
-
-    messageContentEditing.append(inputElement);
 
     if (message.role === "user") {
       // Attachment button
@@ -855,6 +883,11 @@ function focusMessageInput(messageID) {
     const inputElement = messageNode.querySelector("textarea");
     if (inputElement) {
       inputElement.focus();
+    } else {
+      const codeMirrorContainer = EditorView.findFromDOM(messageNode);
+      if (codeMirrorContainer) {
+        codeMirrorContainer.focus();
+      }
     }
   }
 }

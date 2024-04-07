@@ -554,6 +554,13 @@ hr {
     width: 100%;
 }
 
+.message-container .codemirror-container {
+    flex-grow: 1;
+    font-family: inherit;
+    font-size: inherit;
+    width: 100%;
+}
+
 .message-content-editing .attachment-button {
     border-radius: var(--border-radius-xlarge);
     border-width: 0.6px !important;
@@ -596,6 +603,7 @@ hr {
     display: flex;
     flex-direction: row;
     gap: 0.1em;
+    width: 60vw;
 }
 
 .message-content.editing {
