@@ -1,7 +1,7 @@
 :root {
-    --user-message-background-color: var(--vscode-button-background);
+    --user-message-background-color: color-mix(in srgb, var(--vscode-button-background) 92%, var(--shadow-color));
     --user-message-text-color: var(--vscode-button-foreground);
-    --assistant-message-background-color: var(--vscode-editorWidget-background);
+    --assistant-message-background-color: color-mix(in srgb, var(--vscode-editorWidget-background) 92%, var(--shadow-color));
     --assistant-message-text-color: var(--vscode-editorWidget-foreground);
     --user-message-border-color: var(--vscode-editorWidget-border);
     --assistant-message-border-color: var(--vscode-editorWidget-border);
