@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 export class SnippetManager {
-  private readonly snippetsKey = 'flowchat.snippets';
+  private readonly snippetsKey = 'ice.snippets';
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 

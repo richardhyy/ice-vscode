@@ -1,8 +1,8 @@
-# FlowChat 
+# ICE - Integrated Conversational Environment
 
-FlowChat is a flexible, easy-to-use VSCode extension that allows users to experiment with conversational AI using various large language models (LLMs). With FlowChat, you can easily chat with LLMs, manage conversation histories, and even create custom LLM integrations.
+ICE (Integrated Conversational Environment) is a flexible, easy-to-use VSCode extension that allows users to experiment with conversational AI using various large language models (LLMs). With ICE, you can easily chat with LLMs, manage conversation histories, and even create custom LLM integrations.
 
-![FlowChat Screenshot](images/screenshot.png)
+![ICE Screenshot](images/screenshot.png)
 
 > ❓ **Wondering how to use?** 
 >
@@ -55,10 +55,10 @@ FlowChat is a flexible, easy-to-use VSCode extension that allows users to experi
 
 1. Open Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P` on macOS)
 2. Type "Instant Chat" (you don't have to type the whole thing, it should autocomplete)
-3. If the "FlowChat: Instant Chat" command is highlighted, press `Enter`
+3. If the "ICE: Instant Chat" command is highlighted, press `Enter`
 4. You can now select a chat provider and start chatting! (API keys required)
 
-**Note:** You can continue a previous Instant Chat session by running "FlowChat: Continue Last Instant Chat" from the Command Palette.
+**Note:** You can continue a previous Instant Chat session by running "ICE: Continue Last Instant Chat" from the Command Palette.
 
 ### Managing Chat Sessions as `.chat` Files
 
@@ -86,7 +86,7 @@ Right-click on a message, then select "Edit" to modify the message. You can chan
 
 ### Inline Configuration Editing
 
-FlowChat provides a convenient way to edit chat provider configurations or switch between providers at different stages within a single conversation. For example, you can combine and utilize the strengths of different LLMs, such as GPT, Claude, and Gemini, seamlessly in one chat session.
+ICE provides a convenient way to edit chat provider configurations or switch between providers at different stages within a single conversation. For example, you can combine and utilize the strengths of different LLMs, such as GPT, Claude, and Gemini, seamlessly in one chat session.
 
 Selecting a chat provider from the right side of the VSCode status bar will create a configuration card in the chat view. You can edit the configuration values by right-clicking on the card and selecting "Edit".
 
@@ -100,7 +100,7 @@ Autocompletion is available for configuration keys, and forking is supported for
 
 ### Message Snippets
 
-Often, you may find yourself typing the same prompts repeatedly. FlowChat provides a message snippet feature to help you quickly insert frequently used prompts.
+Often, you may find yourself typing the same prompts repeatedly. ICE provides a message snippet feature to help you quickly insert frequently used prompts.
 
 When typing a message, you can select parts of the text and right-click on the selection to "Create Snippet". You will be prompted to enter a quick completion text for the snippet.
 
@@ -112,7 +112,7 @@ Right-click on a message editor and select "Manage Snippets" to view, edit, and 
 
 ## Requirements
 
-To use FlowChat with the built-in LLM providers, you'll need to provide your own API keys. When you send your first message, FlowChat will prompt you to enter the necessary configuration details.
+To use ICE with the built-in LLM providers, you'll need to provide your own API keys. When you send your first message, ICE will prompt you to enter the necessary configuration details.
 
 ## Extension Settings
 
@@ -120,13 +120,13 @@ You can view the script settings for a built-in provider by clicking the provide
 
 ## Creating Custom Providers
 
-FlowChat supports custom LLM providers written in JavaScript. Provider scripts use a format similar to Tampermonkey to declare configuration entries. 
+ICE supports custom LLM providers written in JavaScript. Provider scripts use a format similar to Tampermonkey to declare configuration entries. 
 
-> Take a look at the [Built-in Providers](https://github.com/richardhyy/flowchat-vscode/tree/main/providers) for examples.
+> Take a look at the [Built-in Providers](https://github.com/richardhyy/ice-vscode/tree/main/providers) for examples.
 
 ## Known Issues
 
-As FlowChat is in early development, you may encounter bugs or instability. If you experience any issues, please file a report on the GitHub repository. Pull requests are also welcome!
+As ICE is in early development, you may encounter bugs or instability. If you experience any issues, please file a report on the GitHub repository. Pull requests are also welcome!
 
 ## Planned Enhancements
 
@@ -137,6 +137,10 @@ As FlowChat is in early development, you may encounter bugs or instability. If y
 - [x] UI improvements
 
 ## Release Notes
+
+### 0.4.1
+
+- Renamed the project from "FlowChat" to "ICE" (Integrated Conversational Environment)
 
 ### 0.4.0
 
@@ -178,7 +182,7 @@ As FlowChat is in early development, you may encounter bugs or instability. If y
 
 ### 0.1.0
 
-- Initial release of FlowChat
+- Initial release of ICE
 - Basic chat functionality with OpenAI, Anthropic, and Poe providers
 - Persist conversations as `.chat` YAML files
 - Custom provider support
@@ -187,6 +191,6 @@ As FlowChat is in early development, you may encounter bugs or instability. If y
 
 ## Contributing
 
-If you'd like to contribute to FlowChat, please submit a pull request on GitHub. For major changes, please open an issue first to discuss the proposed changes.
+If you'd like to contribute to ICE, please submit a pull request on GitHub. For major changes, please open an issue first to discuss the proposed changes.
 
-**Enjoy using FlowChat to explore the world of conversational AI!**
+**Enjoy using ICE to explore the world of conversational AI!**

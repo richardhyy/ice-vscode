@@ -33,7 +33,7 @@ const dictionaryConfig = {
         const filePath = pathData.chunk.entryModule.resource;
         const fileContent = fs.readFileSync(filePath, 'utf8');
         // @ts-ignore
-        const commentHeader = fileContent.match(/\/\/\s==FlowChatProvider==[\s\S]*?\/\/\s==\/FlowChatProvider==/)[0];
+        const commentHeader = fileContent.match(/\/\/\s==ICEProvider==[\s\S]*?\/\/\s==\/ICEProvider==/)[0];
         return commentHeader;
       },
       raw: true,

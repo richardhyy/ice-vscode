@@ -1,5 +1,12 @@
 # Change Log
 
+## [0.4.1] - 2024-04-08
+### Changed
+- Renamed the project from "FlowChat" to "ICE" (Integrated Conversational Environment)
+
+### Reasons for the name change
+- Avoid potential trademark conflicts with an existing commercial product named "FlowChat"
+
 ## [0.4.0] - 2024-04-08
 ### Added
 - Message snippets for quickly inserting prompts
@@ -50,7 +57,7 @@
 
 ## [0.1.0] - 2024-03-23
 ### Added
-- Initial release of FlowChat VSCode extension
+- Initial release of ICE VSCode extension
 - Basic chat functionality with OpenAI, Anthropic, and Poe providers
 - Persist conversations as `.chat` YAML files
 - Custom provider support

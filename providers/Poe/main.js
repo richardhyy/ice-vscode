@@ -1,4 +1,4 @@
-// ==FlowChatProvider==
+// ==ICEProvider==
 // @name                Poe
 // @version             1.0
 // @description         Chat with bots on Poe. Please go to [Developers](https://poe.com/developers). For testing and development purposes only. This script is not affiliated with Quora and Poe.
@@ -9,7 +9,7 @@
 // @variableRequired    SystemPrompt=You are a helpful assistant.
 // @variableOptional    Temperature=0.7
 // @variableOptional    LogitBias={}
-// ==/FlowChatProvider==
+// ==/ICEProvider==
 
 const https = require('https');
 

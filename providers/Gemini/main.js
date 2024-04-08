@@ -1,7 +1,7 @@
-// ==FlowChatProvider==
+// ==ICEProvider==
 // @name                Google Gemini
 // @version             1.0
-// @description         FlowChat provider for Google Gemini. Docs: https://ai.google.dev/tutorials. This script is not affiliated with Google.
+// @description         ICE provider for Google Gemini. Docs: https://ai.google.dev/tutorials. This script is not affiliated with Google.
 // @author              Alan Richard
 // @license             MIT  
 // @variableSecure      APIKey
@@ -12,7 +12,7 @@
 // @variableOptional    TopK=1
 // @variableOptional    StopSequences=[]
 // @variableOptional    SafetySettings=[{"category":"HARM_CATEGORY_HARASSMENT","threshold":"BLOCK_MEDIUM_AND_ABOVE"},{"category":"HARM_CATEGORY_HATE_SPEECH","threshold":"BLOCK_MEDIUM_AND_ABOVE"},{"category":"HARM_CATEGORY_SEXUALLY_EXPLICIT","threshold":"BLOCK_MEDIUM_AND_ABOVE"},{"category":"HARM_CATEGORY_DANGEROUS_CONTENT","threshold":"BLOCK_MEDIUM_AND_ABOVE"}]
-// ==/FlowChatProvider==
+// ==/ICEProvider==
 
 const https = require('https');
 

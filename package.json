@@ -1,11 +1,11 @@
 {
-  "name": "flowchat",
-  "displayName": "FlowChat",
+  "name": "integrated-conversational-environment",
+  "displayName": "ICE - Integrated Conversational Environment",
   "icon": "images/icon.png",
-  "description": "LLM conversations in VSCode",
-  "repository": "https://github.com/richardhyy/flowchat-vscode",
+  "description": "LLM conversations in VSCode (Formerly FlowChat)",
+  "repository": "https://github.com/richardhyy/ice-vscode",
   "publisher": "LeaForest",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.84.0"
@@ -25,12 +25,12 @@
   "contributes": {
     "commands": [
       {
-        "command": "flowchat.instantChat.new",
-        "title": "FlowChat: New Instant Chat"
+        "command": "ice.instantChat.new",
+        "title": "ICE: New Instant Chat"
       },
       {
-        "command": "flowchat.instantChat.resume",
-        "title": "FlowChat: Continue Last Instant Chat"
+        "command": "ice.instantChat.resume",
+        "title": "ICE: Continue Last Instant Chat"
       },
       {
         "command": "chat-view.open",

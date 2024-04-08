@@ -1,7 +1,7 @@
-// ==FlowChatProvider==
+// ==ICEProvider==
 // @name                OpenAI Compatible
 // @version             1.0
-// @description         FlowChat provider for OpenAI compatible API. This script is not affiliated with OpenAI.
+// @description         ICE provider for OpenAI compatible API. This script is not affiliated with OpenAI.
 // @author              Alan Richard
 // @license             MIT
 // @variableSecure      APIKey
@@ -13,7 +13,7 @@
 // @variableOptional    Temperature=0.7
 // @variableOptional    LogitBias={}
 // @variableOptional    AdditionalHeaders={}
-// ==/FlowChatProvider==
+// ==/ICEProvider==
 
 const https = require('https');
 

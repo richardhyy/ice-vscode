@@ -76,8 +76,8 @@ export class ProviderManager {
   }
 
   private async parseProviderConfig(code: string): Promise<ProviderConfig> {
-    const headerStartIndex = code.indexOf('// ==FlowChatProvider==');
-    const headerEndIndex = code.indexOf('// ==/FlowChatProvider==');
+    const headerStartIndex = code.indexOf('// ==ICEProvider==');
+    const headerEndIndex = code.indexOf('// ==/ICEProvider==');
     if (headerStartIndex === -1 || headerEndIndex === -1) {
       return {
         info: {},
@@ -287,8 +287,8 @@ export class ProviderManager {
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
       env: {
         ...process.env,
-        FLOWCHAT_PROVIDER_ID: providerID,
-        FLOWCHAT_PROVIDER_CONFIG: JSON.stringify(config),
+        ICE_PROVIDER_ID: providerID,
+        ICE_PROVIDER_CONFIG: JSON.stringify(config),
       },
     });
     child.stdout?.on('data', (data) => {

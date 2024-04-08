@@ -36,14 +36,14 @@ export function activate(context: vscode.ExtensionContext) {
   }));
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('flowchat.instantChat.new', async () => {
+    vscode.commands.registerCommand('ice.instantChat.new', async () => {
       const chatFilePath = instantChatManager.createNewInstantChat();
       openChatView(vscode.Uri.file(chatFilePath));
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('flowchat.instantChat.resume', async () => {
+    vscode.commands.registerCommand('ice.instantChat.resume', async () => {
       const chatFilePath = instantChatManager.getLastInstantChat();
       if (chatFilePath) {
         openChatView(vscode.Uri.file(chatFilePath));
@@ -54,7 +54,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('flowchat.downloadProvider', async () => {
+    vscode.commands.registerCommand('ice.downloadProvider', async () => {
       const url = await vscode.window.showInputBox({ prompt: 'Enter provider URL' });
       if (url) {
         try {
@@ -74,7 +74,7 @@ export function activate(context: vscode.ExtensionContext) {
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.text = '$(comments-view-icon) Chat Provider';
   statusBarItem.command = 'chat-view.provider.open-panel';
-  statusBarItem.tooltip = 'Configure FlowChat Chat Providers';
+  statusBarItem.tooltip = 'Configure ICE Chat Providers';
   context.subscriptions.push(statusBarItem);
 
   // Register message handlers

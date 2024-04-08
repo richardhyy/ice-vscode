@@ -1,7 +1,7 @@
-// ==FlowChatProvider==
+// ==ICEProvider==
 // @name                Anthropic Claude
 // @version             1.0
-// @description         FlowChat provider for Claude by Anthropic. System prompt is supported by Claude 2.1 (or later). Docs: https://docs.anthropic.com/claude/docs. This script is not affiliated with Anthropic.
+// @description         ICE provider for Claude by Anthropic. System prompt is supported by Claude 2.1 (or later). Docs: https://docs.anthropic.com/claude/docs. This script is not affiliated with Anthropic.
 // @author              Alan Richard
 // @license             MIT
 // @_needAttachmentPreprocessing  false
@@ -12,7 +12,7 @@
 // @variableRequired    SystemPrompt=You are a helpful assistant.
 // @variableOptional    Temperature=0.5
 // @variableOptional    LogitBias={}
-// ==/FlowChatProvider==
+// ==/ICEProvider==
 
 const https = require('https');
 const fs = require('fs');

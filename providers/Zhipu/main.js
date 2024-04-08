@@ -1,7 +1,7 @@
-// ==FlowChatProvider==
+// ==ICEProvider==
 // @name                Zhipu GLM
 // @version             1.0
-// @description         FlowChat provider for ZHIPU AI. Docs: https://open.bigmodel.cn/. This script is not affiliated with ZHIPU AI.
+// @description         ICE provider for ZHIPU AI. Docs: https://open.bigmodel.cn/. This script is not affiliated with ZHIPU AI.
 // @author              Alan Richard
 // @license             MIT
 // @variableSecure      APIKey
@@ -10,7 +10,7 @@
 // @variableRequired    SystemPrompt=You are a helpful AI assistant.
 // @variableOptional    Temperature=0.95
 // @variableOptional    TopP=0.7
-// ==/FlowChatProvider==
+// ==/ICEProvider==
 
 const https = require('https');
 const crypto = require('crypto');
