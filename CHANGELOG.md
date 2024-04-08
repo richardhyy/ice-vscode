@@ -1,5 +1,13 @@
 # Change Log
 
+## [0.4.0] - 2024-04-08
+### Added
+- Message snippets for quickly inserting prompts
+
+### Changed
+- Improved color palette for better integration with VSCode themes
+- Replaced plain text editor with feature-rich CodeMirror editor for better message composition experience
+
 ## [0.3.1] - 2024-04-02
 ### Fixed
 - Chat providers not self-contained which prevented some providers from working

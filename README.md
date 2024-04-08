@@ -6,7 +6,26 @@ FlowChat is a flexible, easy-to-use VSCode extension that allows users to experi
 
 > ❓ **Wondering how to use?** 
 >
-> Check out the [Basic Usage](#-basic-usage) section below.
+> Check out the [Basic Usage](#basic-usage) section below.
+
+## Table of Contents
+
+- [Features](#features)
+- [Basic Usage](#basic-usage)
+  - [Instant Chat](#instant-chat)
+  - [Managing Chat Sessions as .chat Files](#managing-chat-sessions-as-chat-files)
+- [Advanced Chat Features](#advanced-chat-features)
+  - [Forking Conversations](#forking-conversations)
+  - [Editing Messages](#editing-messages)
+  - [Inline Configuration Editing](#inline-configuration-editing)
+  - [Message Snippets](#message-snippets)
+- [Requirements](#requirements)
+- [Extension Settings](#extension-settings)
+- [Creating Custom Providers](#creating-custom-providers)
+- [Known Issues](#known-issues)
+- [Planned Enhancements](#planned-enhancements)
+- [Release Notes](#release-notes)
+- [Contributing](#contributing)
 
 ## Features
 
@@ -25,11 +44,12 @@ FlowChat is a flexible, easy-to-use VSCode extension that allows users to experi
   - Inline configuration editing and switching
   - Changes are saved to the `.chat` file
 - Attachments support for multimodal models
+- Message snippets for quickly inserting prompts
 - Instant Chat feature for quickly chatting with LLMs
 - Create custom LLM providers using JavaScript
 - Configure API keys and settings for built-in providers
 
-## ➡️ Basic Usage
+## Basic Usage
 
 ### Instant Chat
 
@@ -46,6 +66,50 @@ FlowChat is a flexible, easy-to-use VSCode extension that allows users to experi
 2. Open the file
 3. Select a chat provider to start (API keys required)
 
+## Advanced Chat Features
+
+### Forking Conversations
+
+Right-click on a message, then select "Duplicate" to create a fork of the conversation. You can then edit the messages and continue the conversation from that point.
+
+You can switch between branches by clicking "Branches" below a message, then selecting the desired branch.
+
+> **Tip:** The "Resend" and "Regenerate" options will also fork the conversation.
+
+![Branching](images/branching.png)
+
+### Editing Messages
+
+Right-click on a message, then select "Edit" to modify the message. You can change both user and LLM messages.
+
+![Editing Messages](images/editing.png)
+
+### Inline Configuration Editing
+
+FlowChat provides a convenient way to edit chat provider configurations or switch between providers at different stages within a single conversation. For example, you can combine and utilize the strengths of different LLMs, such as GPT, Claude, and Gemini, seamlessly in one chat session.
+
+Selecting a chat provider from the right side of the VSCode status bar will create a configuration card in the chat view. You can edit the configuration values by right-clicking on the card and selecting "Edit".
+
+Inline configuration editing applies to messages after the card.
+
+You can also right-click on any message and select "Insert Configuration" to quickly add a configuration card to the chat view.
+
+Autocompletion is available for configuration keys, and forking is supported for configuration changes.
+
+![Inline Configuration Editing](images/configuration.png)
+
+### Message Snippets
+
+Often, you may find yourself typing the same prompts repeatedly. FlowChat provides a message snippet feature to help you quickly insert frequently used prompts.
+
+When typing a message, you can select parts of the text and right-click on the selection to "Create Snippet". You will be prompted to enter a quick completion text for the snippet.
+
+When typing a message, you can enter `/YourSnippetName` to insert the snippet.
+
+Right-click on a message editor and select "Manage Snippets" to view, edit, and delete snippets.
+
+![Message Snippet](images/snippet.png)
+
 ## Requirements
 
 To use FlowChat with the built-in LLM providers, you'll need to provide your own API keys. When you send your first message, FlowChat will prompt you to enter the necessary configuration details.
@@ -58,19 +122,27 @@ You can view the script settings for a built-in provider by clicking the provide
 
 FlowChat supports custom LLM providers written in JavaScript. Provider scripts use a format similar to Tampermonkey to declare configuration entries. 
 
+> Take a look at the [Built-in Providers](https://github.com/richardhyy/flowchat-vscode/tree/main/providers) for examples.
+
 ## Known Issues
 
 As FlowChat is in early development, you may encounter bugs or instability. If you experience any issues, please file a report on the GitHub repository. Pull requests are also welcome!
 
 ## Planned Enhancements
 
-- In context updating of provider configuration
-- Search, tagging, and filtering of chat histories
-- Visualization of conversation trees
-- Rendering performance optimizations
-- UI improvements
+- [ ] Rendering performance optimizations
+- [ ] Search, tagging, and filtering of chat histories
+- [ ] Visualization of conversation trees
+- [x] In context updating of provider configuration
+- [x] UI improvements
 
 ## Release Notes
+
+### 0.4.0
+
+- Added message snippets for quickly inserting prompts
+- Improved color palette for better integration with VSCode themes
+- Replaced plain text editor with feature-rich CodeMirror editor for better message composition experience
 
 ### 0.3.1
 
