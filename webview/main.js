@@ -350,7 +350,78 @@ function _renderAttachments(messageID, attachments, editing, attachmentContainer
   }
 }
 
-function _editorAutoComplete(context) {
+function _renderEditor(codeMirrorContainer, id, content, placeholderText, autocompletionCallback, submitCallback) {
+  const selectionColor = window.getComputedStyle(document.documentElement).getPropertyValue('--vscode-list-inactiveSelectionBackground');
+  const codeMirrorView = new EditorView({
+    state: EditorState.create({
+      doc: content,
+      extensions: [
+        minimalSetup,
+        autocompletion({ override: [autocompletionCallback] }),
+        Prec.highest(
+          keymap.of([
+            {
+              key: "Ctrl-Enter",
+              mac: "Cmd-Enter",
+              run: () => {
+                submitCallback(codeMirrorView.state.doc.toString());
+                return true;
+              }
+            }
+          ])
+        ),
+        placeholder(placeholderText),
+        EditorView.lineWrapping,
+        EditorView.theme({
+          "&": {
+            backgroundColor: "transparent",
+            fontFamily: "sans-serif",
+          },
+          ".cm-gutters": {
+            display: "none",
+          },
+          "&.cm-focused": {
+            outline: "none",
+          },
+          ".cm-line": {
+            color: "var(--assistant-message-text-color)",
+            fontFamily: "sans-serif",
+          },
+          ".cm-activeLine": {
+            backgroundColor: "transparent",
+          },
+          ".cm-content": {
+            caretColor: selectionColor,
+          },
+          ".cm-selectionBackground": {
+            backgroundColor: selectionColor + " !important",
+          },
+          ".cm-announced": {
+            /* If we don't set this, the height of the page will be confusingly changed */
+            /* Still looking for a better solution */
+            display: "none",
+          },
+        }),
+        EditorView.updateListener.of((update) => {
+          if (update.focusChanged) {
+            if (update.view.hasFocus) {
+              globalUndoLock = id;
+            } else {
+              if (globalUndoLock === id) {
+                globalUndoLock = null;
+              }
+            }
+          }
+        }),
+      ],
+    }),
+    parent: codeMirrorContainer
+  });
+
+  return codeMirrorView;
+}
+
+function _messageEditorAutoComplete(context) {
   const before = context.matchBefore(/\/(\w+)/);
   if (!before) {
     return null;
@@ -419,72 +490,9 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
     codeMirrorContainer.dataset.vscodeContext = JSON.stringify({ isEditor: true });
     messageContentEditing.appendChild(codeMirrorContainer);
 
-    const codeMirrorView = new EditorView({
-      state: EditorState.create({
-        doc: message.content,
-        extensions: [
-          minimalSetup,
-          autocompletion({ override: [_editorAutoComplete] }),
-          Prec.highest(
-            keymap.of([
-              {
-                key: "Ctrl-Enter",
-                mac: "Cmd-Enter",
-                run: () => {
-                  _handleMessageSubmit(codeMirrorView.state.doc.toString(), message);
-                  return true;
-                }
-              }
-            ])
-          ),
-          placeholder(
-            message.role === "user" ? "Type a message..." : "Type a response..."
-          ),
-          EditorView.lineWrapping,
-          EditorView.theme({
-            "&": {
-              backgroundColor: "transparent",
-              fontFamily: "sans-serif",
-            },
-            ".cm-gutters": {
-              display: "none",
-            },
-            "&.cm-focused": {
-              outline: "none",
-            },
-            ".cm-line": {
-              color: "var(--assistant-message-text-color)",
-              fontFamily: "sans-serif",
-            },
-            ".cm-activeLine": {
-              backgroundColor: "transparent",
-            },
-            ".cm-content": {
-              caretColor: "var(--vscode-editor-selectionBackground)",
-            },
-            ".cm-selectionBackground": {
-              backgroundColor: "var(--vscode-editor-selectionBackground) !important",
-            },
-            ".cm-announced": {
-              /* If we don't set this, the height of the page will be confusingly changed */
-              /* Still looking for a better solution */
-              display: "none",
-            },
-          }),
-          EditorView.updateListener.of((update) => {
-            if (update.focusChanged) {
-              if (update.view.hasFocus) {
-                globalUndoLock = message.id;
-              } else {
-                if (globalUndoLock === message.id) {
-                  globalUndoLock = null;
-                }
-              }
-            }
-          }),
-        ],
-      }),
-      parent: codeMirrorContainer
+    const placeholderText = message.role === "user" ? "Type a message..." : "Type a response...";
+    _renderEditor(codeMirrorContainer, message.id, message.content, placeholderText, _messageEditorAutoComplete, (content) => {
+      _handleMessageSubmit(content, message);
     });
 
     if (message.role === "user") {
@@ -567,10 +575,15 @@ function _checkConfig(content) {
   }
 }
 
-function _updateAvailableConfigKeys(providerID, inputElement, configKeyContainerID) {
+function _updateAvailableConfigKeys(providerID, editorContainer, configKeyContainerID) {
   const configKeyContainer = document.getElementById(configKeyContainerID);
   configKeyContainer.innerHTML = "";
-  const config = _decodeConfig(inputElement.value);
+  const editor = EditorView.findFromDOM(editorContainer);
+  if (!editor) {
+    return;
+  }
+
+  const config = _decodeConfig(editor.state.doc.toString());
 
   function createKeyToken(key, group) {
     const tokenElement = document.createElement("span");
@@ -578,8 +591,10 @@ function _updateAvailableConfigKeys(providerID, inputElement, configKeyContainer
     tokenElement.textContent = key;
     tokenElement.title = group;
     tokenElement.addEventListener("click", function () {
-      inputElement.value += (inputElement.value.length > 0 ? "\n\n" : "") + key + " = ";
-      inputElement.focus();
+      editor.dispatch({
+        changes: { from: editor.state.doc.length, insert: key + " = " },
+      });
+      editor.focus();
       _updateAvailableConfigKeys(configKeyContainer);
     });
     configKeyContainer.appendChild(tokenElement);
@@ -611,48 +626,56 @@ function _renderConfigNode(messageNode, message, clipContent, editing) {
     configKeyContainer.classList.add("config-key-container");
     configKeyContainer.id = `config-key-container-${message.id}`;
 
-    let updateAvailableConfigKeysTimeout = null;  // Debounce the update of available config keys
-    const inputElement = document.createElement("textarea");
-    inputElement.dataset.id = message.id;
-    inputElement.value = _encodeConfig(JSON.parse(message.content));
-    inputElement.spellcheck = true;
-    inputElement.addEventListener("keydown", function (event) {
-      if (event.key === "Enter" && event.metaKey) {
-        event.preventDefault();
-        _handleMessageSubmit(
-          JSON.stringify(_decodeConfig(event.target.value)),
-          message
-        );
+    const codeMirrorContainer = document.createElement("div");
+    codeMirrorContainer.classList.add("codemirror-container");
+    codeMirrorContainer.dataset.id = message.id;
+    codeMirrorContainer.dataset.vscodeContext = JSON.stringify({ isEditor: true });
+    messageNode.appendChild(codeMirrorContainer);
+
+    _renderEditor(codeMirrorContainer, message.id, _encodeConfig(JSON.parse(message.content)), "Type the configuration...",
+    (context) => {
+      if (!providerConfigKeys[providerID]) {
+        return null;
+      }
+
+      _updateAvailableConfigKeys(providerID, codeMirrorContainer, configKeyContainer.id);
+    
+      const before = context.matchBefore(/^\s*(\w+)/);
+
+      if (!before) {
+        return null;
+      }
+    
+      return {
+        from: before.from,
+        options:
+        [
+          ...Object.keys(providerConfigKeys[providerID])
+            .map((group) => ([group, providerConfigKeys[providerID][group]]))
+            .map(([group, keys]) => keys.map((key) => ({
+              label: key,
+              apply: key + ' = ',
+              type: `config-key-${group}`
+            }))
+          ).flat(),
+          {
+            label: "Provider",
+            apply: "Provider = ",
+            type: "config-key-Provider"
+          }
+        ],
+        validFor: /\s*$/.test(before.text),
+      };
+    }, 
+    (content) => {
+      const error = _checkConfig(content);
+      if (error) {
+        validityCheckElement.textContent = error;
+        validityCheckElement.classList.add("invalid");
       } else {
-        _textareaCheckAndHandleUndoRedo(event);
+        _handleMessageSubmit(JSON.stringify(_decodeConfig(content)), message);
       }
     });
-    inputElement.addEventListener("input", function (event) {
-      auto_grow(event.target);
-
-      const warning = _checkConfig(event.target.value);
-      if (warning) {
-        validityCheckElement.textContent = warning;
-      } else {
-        validityCheckElement.textContent = "";
-      }
-
-      // Debounce the update of available config keys
-      clearTimeout(updateAvailableConfigKeysTimeout);
-      updateAvailableConfigKeysTimeout = setTimeout(_updateAvailableConfigKeys, 300, providerID, inputElement, configKeyContainer.id);
-    });
-    inputElement.addEventListener("focus", function (event) {
-      auto_grow(event.target);
-      globalUndoLock = message.id;
-
-      _updateAvailableConfigKeys(providerID, inputElement, configKeyContainer.id);
-    });
-    inputElement.addEventListener("blur", function (event) {
-      if (globalUndoLock === message.id) {
-        globalUndoLock = null;
-      }
-    });
-    messageNode.appendChild(inputElement);
 
     const operationBar = document.createElement("div");
     operationBar.classList.add("operation-bar");
