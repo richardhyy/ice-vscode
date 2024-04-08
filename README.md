@@ -138,6 +138,10 @@ As ICE is in early development, you may encounter bugs or instability. If you ex
 
 ## Release Notes
 
+### 0.4.2
+
+- Fixed an issue where the submit button did not work in the chat view
+
 ### 0.4.1
 
 - Renamed the project from "FlowChat" to "ICE" (Integrated Conversational Environment)

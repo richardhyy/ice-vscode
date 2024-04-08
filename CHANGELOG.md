@@ -1,5 +1,9 @@
 # Change Log
 
+## [0.4.2] - 2024-04-09
+### Fixed
+- Issue where the submit button did not work in the chat view
+
 ## [0.4.1] - 2024-04-08
 ### Changed
 - Renamed the project from "FlowChat" to "ICE" (Integrated Conversational Environment)
