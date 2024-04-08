@@ -460,10 +460,10 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
               backgroundColor: "transparent",
             },
             ".cm-content": {
-              caretColor: "var(--vscode-selection-background)",
+              caretColor: "var(--vscode-editor-selectionBackground)",
             },
             ".cm-selectionBackground": {
-              backgroundColor: "var(--vscode-selection-background) !important",
+              backgroundColor: "var(--vscode-editor-selectionBackground) !important",
             },
             ".cm-announced": {
               /* If we don't set this, the height of the page will be confusingly changed */
