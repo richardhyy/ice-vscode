@@ -275,27 +275,6 @@ function _decodeConfig(str) {
   return obj;
 }
 
-function _textareaCheckAndHandleUndoRedo(event) {
-  if (isMac) {
-    if (event.metaKey && event.key === 'z') {
-      event.preventDefault();
-      if (event.shiftKey) {
-        document.execCommand('redo');
-      } else {
-        document.execCommand('undo');
-      }
-    }
-  } else {
-    if (event.ctrlKey && event.key === 'z') {
-      event.preventDefault();
-      document.execCommand('undo');
-    } else if (event.ctrlKey && event.key === 'y') {
-      event.preventDefault();
-      document.execCommand('redo');
-    }
-  }
-}
-
 function _renderAttachments(messageID, attachments, editing, attachmentContainerElement = null) {
   const attachmentContainer = attachmentContainerElement ? attachmentContainerElement : document.querySelector(
     `.attachment-container[data-id="${messageID}"]`
@@ -923,14 +902,9 @@ function focusMessageInput(messageID) {
     `.message-container[data-id="${messageID}"]`
   );
   if (messageNode) {
-    const inputElement = messageNode.querySelector("textarea");
-    if (inputElement) {
-      inputElement.focus();
-    } else {
-      const codeMirrorContainer = EditorView.findFromDOM(messageNode);
-      if (codeMirrorContainer) {
-        codeMirrorContainer.focus();
-      }
+    const codeMirrorContainer = EditorView.findFromDOM(messageNode);
+    if (codeMirrorContainer) {
+      codeMirrorContainer.focus();
     }
   }
 }

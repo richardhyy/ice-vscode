@@ -535,26 +535,6 @@ hr {
     user-select: text;
 }
 
-.message-container textarea {
-    background-color: transparent;
-    border: none;
-    resize: none;
-    height: 1.4em;
-    width: 60vw;
-    resize: none;
-    overflow: hidden;
-    min-height: 10px;
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-    font-size: var(--fs-body);
-    color: var(--assistant-message-text-color);
-    outline: none;
-    vertical-align: middle;
-}
-
-.message-container.card textarea {
-    width: 100%;
-}
-
 .codemirror-container {
     flex-grow: 1;
     font-family: inherit;
