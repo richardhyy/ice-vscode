@@ -145,7 +145,7 @@ code {
 }
 
 pre {
-    background-color: var(--code-block);
+    background-color: color-mix(in srgb, var(--code-block) 40%, var(--shadow-color));
     color: inherit;
     padding: 1em;
     white-space: pre-wrap;
@@ -203,6 +203,7 @@ pre .copy-button svg {
     width: 50%;
     height: 50%;
     color: var(--secondary-color);
+    mix-blend-mode: exclusion;
 }
 
 /* Tables */
@@ -554,7 +555,7 @@ hr {
     width: 100%;
 }
 
-.message-container .codemirror-container {
+.codemirror-container {
     flex-grow: 1;
     font-family: inherit;
     font-size: inherit;
