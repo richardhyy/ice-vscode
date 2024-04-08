@@ -470,13 +470,6 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
       (!messageIDWithChildren[message.id] || messageIDWithChildren[message.id].length === 0)
         ? icons.ICON_ARROW_RIGHT
         : icons.ICON_CHECK;
-    submitButtonElement.addEventListener("click", function () {
-      // Submit editing
-      _handleMessageSubmit(
-        messageContent.querySelector("textarea").value,
-        message
-      );
-    });
     messageNode.appendChild(submitButtonElement);
     
     const messageContentEditing = document.createElement("div");
@@ -491,8 +484,16 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
     messageContentEditing.appendChild(codeMirrorContainer);
 
     const placeholderText = message.role === "user" ? "Type a message..." : "Type a response...";
-    _renderEditor(codeMirrorContainer, message.id, message.content, placeholderText, _messageEditorAutoComplete, (content) => {
+    const editor = _renderEditor(codeMirrorContainer, message.id, message.content, placeholderText, _messageEditorAutoComplete, (content) => {
       _handleMessageSubmit(content, message);
+    });
+
+    submitButtonElement.addEventListener("click", function () {
+      // Submit editing
+      _handleMessageSubmit(
+        editor.state.doc.toString(),
+        message
+      );
     });
 
     if (message.role === "user") {
