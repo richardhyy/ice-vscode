@@ -551,6 +551,10 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           await snippetManager.createSnippet(snippetText);
           this.loadSnippets(webviewPanel);
           break;
+        case 'contextMenu':
+          // Set the current active webview to the one that sent the context menu event
+          this.activeWebview = webviewPanel;
+          break;
       }
     });
   }

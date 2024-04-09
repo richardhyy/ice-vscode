@@ -23,6 +23,7 @@ let providerConfigKeys = {}; // {providerID: [configKey1, configKey2, ...]}
 let snippets = {}; // {completion: content}
 
 let globalUndoLock = null;
+let contextMenuTargetElement = null;
 
 let _editingMessageAttachments = {}; // {messageID: [attachment1, attachment2, ...]}
 
@@ -1083,26 +1084,28 @@ function resendMessage(messageID) {
 }
 
 function contextMenuOperation(operation, subOperation) {
-  const cursorHoverElements = document.querySelectorAll(":hover");
-
   let messageID;
-  for (const element of cursorHoverElements) {
-    if (element.classList.contains("message-container") || element.classList.contains("message-node")) {
-      messageID = element.dataset.id;
+  let attachmentID;
+
+  // Recursively find the message node from the `contextMenuTargetElement` or its parent elements
+  let currentCheckElement = contextMenuTargetElement;
+  while (currentCheckElement) {
+    if (currentCheckElement.classList.contains("message-container") || currentCheckElement.classList.contains("message-node")) {
+      messageID = currentCheckElement.dataset.id;
       break;
     }
+    
+    if (currentCheckElement.classList.contains("file")) {
+      attachmentID = currentCheckElement.dataset.attachmentID;
+    }
+
+    currentCheckElement = currentCheckElement.parentElement;
+    console.log("Current check element", currentCheckElement);
   }
+  
   if (!messageID) {
     console.error("No message node found in the cursor hover elements");
     return;
-  }
-
-  let attachmentID;
-  for (const element of cursorHoverElements) {
-    if (element.classList.contains("file")) {
-      attachmentID = element.dataset.attachmentID;
-      break;
-    }
   }
 
   switch (operation) {
@@ -1302,6 +1305,13 @@ window.addEventListener("message", (event) => {
     default:
       console.error("Unknown message type", message.type);
   }
+});
+
+document.addEventListener('contextmenu', function(event) {
+  contextMenuTargetElement = event.target;
+  vscode.postMessage({
+    type: "contextMenu",
+  });
 });
 
 function sendMessage(leafMessage) {
