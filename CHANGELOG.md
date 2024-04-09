@@ -1,5 +1,12 @@
 # Change Log
 
+## [0.4.3] - 2024-04-09
+### Added
+- Support for custom API URL for built-in Anthropic provider
+
+### Fixed
+- Issue where the context menu may not target the correct chat message on Windows and split view
+
 ## [0.4.2] - 2024-04-09
 ### Fixed
 - Issue where the submit button did not work in the chat view

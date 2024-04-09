@@ -138,6 +138,11 @@ As ICE is in early development, you may encounter bugs or instability. If you ex
 
 ## Release Notes
 
+### 0.4.3
+
+- Fixed an issue where the context menu may not target the correct chat message on Windows and split view
+- Support for custom API URL for built-in Anthropic provider
+
 ### 0.4.2
 
 - Fixed an issue where the submit button did not work in the chat view
