@@ -1,12 +1,14 @@
 // ==ICEProvider==
 // @name                Anthropic Claude
-// @version             1.0
+// @version             1.1
 // @description         ICE provider for Claude by Anthropic. System prompt is supported by Claude 2.1 (or later). Docs: https://docs.anthropic.com/claude/docs. This script is not affiliated with Anthropic.
 // @author              Alan Richard
 // @license             MIT
 // @_needAttachmentPreprocessing  false
 // @_attachmentFilter   { "Images": ["jpg", "jpeg", "png", "gif", "webp"], "Documents": ["txt", "md"], "Others": ["*"] }
 // @variableSecure      APIKey
+// @variableRequired    APIHost=api.anthropic.com
+// @variableRequired    APIPath=/v1/messages
 // @variableRequired    Model=claude-3-opus-20240229
 // @variableRequired    MaxTokensToSample=4000
 // @variableRequired    SystemPrompt=You are a helpful assistant.
@@ -117,9 +119,9 @@ process.on('message', (message) => {
     debug(`Request body: ${requestBody}\n`);
 
     const options = {
-      hostname: 'api.anthropic.com',
+      hostname: config.APIHost,
       port: 443,
-      path: '/v1/messages',
+      path: config.APIPath,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
