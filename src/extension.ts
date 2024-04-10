@@ -268,7 +268,18 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
 
     webviewPanel.webview.html = this.getWebViewContent(webviewPanel.webview);
 
-    await this.loadChatHistory(webviewPanel, chatHistoryManager);
+    // Check if the file exists
+    if (!fs.existsSync(chatFilePath)) {
+      webviewPanel.webview.postMessage({ type: 'showErrorOverlay', errorID: 'fileNotFound', detail: chatFilePath });
+      return;
+    }
+
+    try {
+      await this.loadChatHistory(webviewPanel, chatHistoryManager);
+    } catch (e: any) {
+      webviewPanel.webview.postMessage({ type: 'showErrorOverlay', errorID: 'corruptedChatFile', detail: e.message });
+      return;
+    }
 
     this.loadSnippets(webviewPanel);
 

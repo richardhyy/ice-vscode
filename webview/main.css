@@ -11,6 +11,8 @@
     --secondary-color: var(--vscode-button-secondaryBackground);
     --tertiary-color: var(--vscode-button-secondaryHoverBackground);
     --quaternary-color: var(--vscode-editorWidget-border);
+    --bg-color: var(--vscode-editor-background);
+    --error-color: var(--vscode-errorForeground);
     --light-gray: var(--vscode-editorHoverWidget-statusBarBackground);
     --dark-gray: var(--vscode-editorHoverWidget-border);
     --code-block: var(--vscode-textCodeBlock-background);
@@ -868,6 +870,70 @@ hr {
 
 .progressing-indicator .dot:nth-child(3) {
     animation-delay: 0.4s;
+}
+
+.fullscreen-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--bg-color);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    z-index: 9999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s var(--default-cubic-bezier);
+}
+
+.fullscreen-overlay.show {
+    display: flex;
+    flex-direction: column;
+    opacity: 1;
+    pointer-events: auto;
+    user-select: text;
+}
+
+.fullscreen-overlay .show {
+    display: block;
+}
+
+.error-icon {
+    margin-bottom: 20px;
+}
+
+.error-icon svg {
+    color: var(--error-color);
+    width: 80px;
+    height: 80px;
+}
+
+.error-message {
+    font-size: 16px;
+    margin-bottom: 20px;
+    color: var(--vscode-editor-foreground);
+}
+
+.show-error-details-button {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--vscode-editor-foreground);
+    cursor: pointer;
+    text-decoration: underline;
+    font-size: var(--fs-footnote);
+}
+
+.error-details {
+    display: none;
+    font-size: var(--fs-footnote);
+    color: var(--vscode-editor-foreground);
+    margin-top: 20px;
+    white-space: pre-wrap;
+    text-align: left;
 }
 
 @keyframes loading-dot {

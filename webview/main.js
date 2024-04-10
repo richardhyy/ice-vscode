@@ -28,11 +28,6 @@ let contextMenuTargetElement = null;
 let _editingMessageAttachments = {}; // {messageID: [attachment1, attachment2, ...]}
 
 
-function auto_grow(element) {
-  element.style.height = "5px";
-  element.style.height = (element.scrollHeight) + "px";
-}
-
 function setProgressIndicator(text, cancelableRequestID) {
   const container = document.querySelector(".progress-container");
   if (text) {
@@ -54,6 +49,32 @@ function setProgressIndicator(text, cancelableRequestID) {
     cancelButton.onclick = null;
     cancelButton.classList.remove("show");
   }
+}
+
+function showErrorOverlay(message, icon, details = null) {
+  const overlay = document.getElementById('errorOverlay');
+  const errorIcon = document.getElementById('errorIcon');
+  const errorMessage = document.getElementById('errorMessage');
+  const showDetailsButton = document.getElementById('showDetailsButton');
+  const errorDetails = document.getElementById('errorDetails');
+
+  errorMessage.textContent = message;
+  errorIcon.innerHTML = icon;
+  if (details) {
+    errorDetails.textContent = details;
+
+    showDetailsButton.onclick = () => {
+      errorDetails.classList.add('show');
+      showDetailsButton.classList.remove('show');
+    };
+
+    showDetailsButton.classList.add('show');
+  } else {
+    errorDetails.classList.remove('show');
+    showDetailsButton.classList.remove('show');
+  }
+
+  overlay.classList.add('show');
 }
 
 function updateAttachments(messageID, attachments, append = false, attachmentContainerElement = null) {
@@ -1301,6 +1322,21 @@ window.addEventListener("message", (event) => {
       break;
     case "loadSnippets":
       snippets = message.snippets;
+      break;
+    case "showErrorOverlay":
+      const errorID = message.errorID;
+      const detail = message.detail;
+
+      switch (errorID) {
+        case "corruptedChatFile":
+          showErrorOverlay("This file is corrupted and cannot be opened", icons.ICON_FOLDER_X, detail);
+          break;
+        case "fileNotFound":
+          showErrorOverlay("File not found", icons.ICON_FOLDER_QUESTION, detail);
+          break;
+        default:
+          showErrorOverlay("Unknown error", icons.ICON_EXCLAMATION_OCTAGON, detail);
+      }
       break;
     default:
       console.error("Unknown message type", message.type);
