@@ -1,5 +1,10 @@
 # Change Log
 
+## [0.4.4] - 2024-05-05
+### Changed
+- Improved editor scrolling behavior for a better composition experience
+- Updated the press-down feedback for editor action buttons
+
 ## [0.4.3] - 2024-04-09
 ### Added
 - Support for custom API URL for built-in Anthropic provider

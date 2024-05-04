@@ -5,7 +5,7 @@
   "description": "LLM conversations in VSCode (Formerly FlowChat)",
   "repository": "https://github.com/richardhyy/ice-vscode",
   "publisher": "LeaForest",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.84.0"

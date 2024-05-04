@@ -138,6 +138,11 @@ As ICE is in early development, you may encounter bugs or instability. If you ex
 
 ## Release Notes
 
+### 0.4.4
+
+- Limited the height of message editor for better text composition experience
+- Updated the press-down feedback for editor action buttons
+
 ### 0.4.3
 
 - Fixed an issue where the context menu may not target the correct chat message on Windows and split view
