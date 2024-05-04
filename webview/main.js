@@ -378,6 +378,19 @@ function _renderEditor(codeMirrorContainer, id, content, placeholderText, autoco
             backgroundColor: "transparent",
             fontFamily: "sans-serif",
           },
+          "&.cm-editor": { 
+            maxHeight: "61.8vh",
+          },
+          "&.cm-scroller": { 
+            overflow: "auto",
+          },
+          "& .cm-scroller::-webkit-scrollbar": {
+            width: "5px",
+            height: "5px",
+          },
+          "& .cm-scroller::-webkit-scrollbar-thumb": {
+            borderRadius: "var(--border-radius-small)",
+          },
           ".cm-gutters": {
             display: "none",
           },

@@ -585,7 +585,7 @@ hr {
 .message-content-editing {
     display: flex;
     flex-direction: row;
-    gap: 0.1em;
+    gap: 0.2em;
     width: 60vw;
 }
 
@@ -730,6 +730,11 @@ hr {
     display: flex;
     justify-content: center;
     align-items: center;
+    transition: all 0.1s var(--default-cubic-bezier);
+}
+
+.edit-operation-button:active {
+    filter: brightness(80%);
 }
 
 .edit-operation-button svg {
