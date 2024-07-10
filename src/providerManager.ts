@@ -183,6 +183,7 @@ export class ProviderManager {
       prompt: `Enter value for ${variableName}\n${defaultValue ? `Default: ${defaultValue}` : ''}\n(Provider ID: ${providerID})`,
       value: defaultValue || '',
       password: password,
+      ignoreFocusOut: true,
     });
   }
 
@@ -450,6 +451,7 @@ export class ProviderManager {
   
     const selectedItem = await vscode.window.showQuickPick(quickPickItems, {
       placeHolder: 'Select a config entry to edit or open the provider script',
+      ignoreFocusOut: true,
     });
   
     if (selectedItem) {
@@ -463,6 +465,7 @@ export class ProviderManager {
           prompt: `Enter value for ${key}`,
           value: oldValue || '',
           password: isSecure,
+          ignoreFocusOut: true,
         });
   
         if (newValue !== undefined) {

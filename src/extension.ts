@@ -204,6 +204,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
     const selectedItem = await vscode.window.showQuickPick(items, {
       title: 'Select a chat provider',
       placeHolder: this.currentProvider?.info['name'] || 'No provider selected',
+      ignoreFocusOut: true,
     });
   
     if (selectedItem) {
@@ -494,6 +495,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
                   { 
                     placeHolder: 'Select an action for the attachment',
                     title: `${basename} is outside the chat folder`,
+                    ignoreFocusOut: true,
                   }
                 );
                 if (action === 'Copy to ./.chat/attachments') {

@@ -33,6 +33,7 @@ export class SnippetManager {
         }
         return null;
       },
+      ignoreFocusOut: true,
     });
 
     if (completionText) {
@@ -68,7 +69,8 @@ export class SnippetManager {
               return 'Snippet text cannot be empty';
             }
             return null;
-          }
+          },
+          ignoreFocusOut: true,
         });
 
         if (snippetText) {
@@ -92,6 +94,7 @@ export class SnippetManager {
             const updatedSnippetText = await vscode.window.showInputBox({
               prompt: 'Update the snippet text',
               value: selectedItem.detail,
+              ignoreFocusOut: true,
             });
 
             if (updatedSnippetText) {
