@@ -220,6 +220,11 @@
     "configuration": {
       "title": "ICE",
       "properties": {
+        "ice.instantChatSessionFolder": {
+          "type": "string",
+          "default": "",
+          "description": "The folder to store ICE Instant Chat sessions. Empty = use default."
+        },
         "ice.usePreviousProviderForNewChat": {
           "type": "boolean",
           "default": false,

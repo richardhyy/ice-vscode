@@ -48,7 +48,14 @@ export function activate(context: vscode.ExtensionContext) {
       if (chatFilePath) {
         openChatView(vscode.Uri.file(chatFilePath));
       } else {
-        vscode.window.showInformationMessage('No previous instant chat found.');
+        vscode.window.showInformationMessage(
+          `Could not find any previous Instant Chat sessions in ${instantChatManager.getInstantChatFolder()}`, 
+          'Start New Instant Chat')
+        .then((value) => {
+          if (value === 'Start New Instant Chat') {
+            vscode.commands.executeCommand('ice.instantChat.new');
+          }
+        });
       }
     })
   );
@@ -135,7 +142,7 @@ export function activate(context: vscode.ExtensionContext) {
   }));
 }
 
-function getConfigurationValue<T>(key: string): T | undefined {
+export function getConfigurationValue<T>(key: string): T | undefined {
   return vscode.workspace.getConfiguration('ice').get<T>(key);
 }
 
