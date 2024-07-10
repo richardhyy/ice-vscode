@@ -60,6 +60,8 @@ ICE (Integrated Conversational Environment) is a flexible, easy-to-use VSCode ex
 
 **Note:** You can continue a previous Instant Chat session by running "ICE: Continue Last Instant Chat" from the Command Palette.
 
+If you've enabled the `Use Previous Provider For New Chat` setting, ICE will automatically select your previously used provider when starting a new chat.
+
 ### Managing Chat Sessions as `.chat` Files
 
 1. Create a new file with a `.chat` extension (e.g., `my_conversation.chat`)
@@ -114,9 +116,16 @@ Right-click on a message editor and select "Manage Snippets" to view, edit, and 
 
 To use ICE with the built-in LLM providers, you'll need to provide your own API keys. When you send your first message, ICE will prompt you to enter the necessary configuration details.
 
-## Extension Settings
+## Extension Settings & Provider Configuration
 
-You can view the script settings for a built-in provider by clicking the provider name in the VSCode status bar, selecting "Configure". Provider code can also be opened from this menu.
+You can view and edit **provider-specific settings** by clicking the provider name in the VSCode status bar and selecting "Configure". Provider code can also be opened from this menu.
+
+Additionally, ICE provides several **extension configuration options**:
+
+* `Instant Chat Session Folder`: Specify a custom folder to store Instant Chat sessions. Leave empty to use the default location.
+* `Use Previous Provider For New Chat`: When checked, ICE will automatically select the previously used provider when starting a new chat.
+
+You can access these settings through VSCode's settings interface.
 
 ## Creating Custom Providers
 
@@ -137,6 +146,13 @@ As ICE is in early development, you may encounter bugs or instability. If you ex
 - [x] UI improvements
 
 ## Release Notes
+
+### 0.5.0
+- Support for showing the previously used provider at the top of the provider list when starting a new chat
+- Configuration option for automatically selecting the previously used provider when starting a new chat
+- Configuration option for customizing Instant Chat's session folder path
+- Important popups, such as the provider selection and API key input, will now persist even if the user clicks outside of them
+- Improved stability of the OpenAI-compatible provider when streaming responses
 
 ### 0.4.4
 
@@ -206,5 +222,3 @@ As ICE is in early development, you may encounter bugs or instability. If you ex
 ## Contributing
 
 If you'd like to contribute to ICE, please submit a pull request on GitHub. For major changes, please open an issue first to discuss the proposed changes.
-
-**Enjoy using ICE to explore the world of conversational AI!**

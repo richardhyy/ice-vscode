@@ -1,5 +1,17 @@
 # Change Log
 
+## [0.5.0] - 2024-07-11
+### Added
+- Support for showing the previously used provider at the top of the provider list when starting a new chat
+- Configuration option for automatically selecting the previously used provider when starting a new chat
+- Configuration option for customizing Instant Chat's session folder path
+
+### Changed
+- Important popups, such as the provider selection and API key input, will now persist even if the user clicks outside of them
+
+### Fixed
+- Improved stability of the OpenAI-compatible provider when streaming responses
+
 ## [0.4.4] - 2024-05-05
 ### Changed
 - Improved editor scrolling behavior for a better composition experience
