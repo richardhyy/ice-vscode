@@ -68,7 +68,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.provider.open-panel', async () => {
-    await chatViewProvider.showProviderPicker();
+    await chatViewProvider.showProviderPicker(false);
   }));
 
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -156,6 +156,8 @@ class QuickPickerSeparator implements vscode.QuickPickItem {
   }
 }
 
+const STATEKEY_PREVIOUS_PROVIDER_ID = 'chatView.previousProviderID';
+
 class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
   private readonly providerManager: ProviderManager;
   private currentProvider: Provider | null = null;
@@ -165,7 +167,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
     this.providerManager = new ProviderManager(context);
   }
 
-  async showProviderPicker() {
+  async showProviderPicker(showPreviousProvider: boolean) {
     const providers = await this.providerManager.getProviderIDs();
     const providerItems: ProviderQuickPickerItem[] = await Promise.all(
       providers.map(async (providerID) => {
@@ -199,6 +201,16 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
         detail: this.currentProvider.id,
         provider: this.currentProvider,
       } as ProviderQuickPickerItem);
+
+      if (showPreviousProvider) {
+        items.unshift(new QuickPickerSeparator());
+        items.unshift({
+          label: `$(arrow-right) ${this.currentProvider.info['name'] || this.currentProvider.id}`,
+          description: 'Previously selected provider',
+          detail: this.currentProvider.id,
+          provider: this.currentProvider,
+        } as ProviderQuickPickerItem);
+      }
     }
   
     const selectedItem = await vscode.window.showQuickPick(items, {
@@ -218,6 +230,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             const label = this.currentProvider.info['name'] || this.currentProvider.id;
             updateProviderStatusBar(label);
             postMessageToCurrentWebview({ type: 'selectProvider', providerID: this.currentProvider.id });
+            this.context.globalState.update(STATEKEY_PREVIOUS_PROVIDER_ID, this.currentProvider.id);
           }
         } else if (selectedItem.label === openCustomProviderFolderLabel) {
           vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(customProviderFolder));
@@ -243,6 +256,22 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
 
   public async resolveCustomEditor(document: vscode.CustomDocument, webviewPanel: vscode.WebviewPanel, token: vscode.CancellationToken): Promise<void> {
     await this.providerManager.loadProviders();
+
+    if (!this.currentProvider) {
+      // Load the previous provider if current provider is not set
+      const previousProviderID = this.context.globalState.get<string>(STATEKEY_PREVIOUS_PROVIDER_ID);
+      if (previousProviderID) {
+        this.providerManager.getProviderByID(previousProviderID).then((provider) => {
+          if (provider) {
+            console.log('Previous provider found:', provider.id);
+            this.currentProvider = provider;
+            updateProviderStatusBar(provider.info['name'] || provider.id);
+          } else {
+            console.log('Previous provider not found:', previousProviderID);
+          }
+        });
+      }
+    }
 
     const chatFilePath = document.uri.fsPath;
     const chatHistoryManager = new ChatHistoryManager(chatFilePath);
@@ -423,12 +452,14 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             if (providerDisplay) {
               updateProviderStatusBar(providerDisplay.info['name'] || providerDisplay.id);
               this.currentProvider = providerDisplay;
+              this.context.globalState.update(STATEKEY_PREVIOUS_PROVIDER_ID, this.currentProvider.id);
             } else {
               updateProviderStatusBar(message.providerID, 'Provider not found');
               this.currentProvider = null;
             }
           } else {
-            vscode.commands.executeCommand('chat-view.provider.open-panel');
+            // No provider selected, show the provider picker
+            this.showProviderPicker(true);  // true: show the previously selected provider for quick access
           }
           break;
         case 'confirmAction':
