@@ -1,9 +1,11 @@
 // ==ICEProvider==
 // @name                OpenAI Compatible
-// @version             1.0
+// @version             1.1
 // @description         ICE provider for OpenAI compatible API. This script is not affiliated with OpenAI.
 // @author              Alan Richard
 // @license             MIT
+// @_needAttachmentPreprocessing  false
+// @_attachmentFilter   { "Images": ["jpg", "jpeg", "png", "gif", "webp"], "Documents": ["txt", "md"], "Others": ["*"] }
 // @variableSecure      APIKey
 // @variableRequired    APIHost=api.openai.com
 // @variableRequired    APIPath=/v1/chat/completions
@@ -16,6 +18,8 @@
 // ==/ICEProvider==
 
 const https = require('https');
+const fs = require('fs');
+const isBinaryFileSync = require("isbinaryfile").isBinaryFileSync;
 
 function debug(message) {
   process.send({
@@ -32,10 +36,74 @@ process.on('message', (message) => {
     const messageTrail = message.messageTrail;
     const config = message.config;
 
-    const messages = messageTrail.map((message) => ({
-      role: message.role,
-      content: message.content,
-    }));
+    const messages = messageTrail.map((message) => {
+      const processedMessage = {
+        role: message.role,
+        content: [
+          {
+            type: 'text',
+            text: message.content
+          }
+        ]
+      };
+
+      if (message.attachments) {
+        for (const attachment of message.attachments) {
+          if (attachment.url.startsWith('data:')) {
+            // Base64 encoded
+            const mimeType = attachment.url.split(';')[0].split(':')[1];
+            const base64Data = attachment.url.split(',')[1];
+
+            if (mimeType.startsWith('image/')) {
+              processedMessage.content.push({
+                type: 'image_url',
+                source: {
+                  type: 'base64',
+                  media_type: mimeType,
+                  data: base64Data
+                }
+              });
+            }
+          } else {
+            // URL
+            const buffer = fs.readFileSync(attachment.url);
+            
+            // Check if the file is binary
+            const isBinary = isBinaryFileSync(buffer);
+            if (!isBinary) {
+              processedMessage.content[0].text = `<${attachment.name}>\n${buffer.toString()}\n</${attachment.name}>\n${processedMessage.content[0].text}`;
+            } else {
+              // Check if the file is a supported image
+              let extension = attachment.url.split('.').pop().toLowerCase();
+              if (extension === 'jpg') {
+                extension = 'jpeg';
+              }
+
+              if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(extension)) {
+                const base64Data = buffer.toString('base64');
+                processedMessage.content.push({
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: `image/${extension}`,
+                    data: base64Data
+                  }
+                });
+              } else {
+                processedMessage.content[0].text = `<${attachment.name}>\nUnsupported file type\n</${attachment.name}>\n${processedMessage.content[0].text}`;
+                process.send({
+                  type: 'warning',
+                  requestID: requestID,
+                  content: `Unsupported attachment: ${attachment.name}`
+                });
+              }
+            }
+          }
+        }
+      }
+
+      return processedMessage;
+    });
 
     messages.push({
       role: 'system',
@@ -115,28 +183,33 @@ process.on('message', (message) => {
 
       let responseData = '';
 
-      res.on('data', (chunk) => {
-        responseData += chunk;
-        debug(`Received data: ${chunk}\n`);
-
-        const lines = responseData.split('\n');
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const dataStr = line.substring(6);
-            if (dataStr !== '[DONE]') {
-              const data = JSON.parse(dataStr);
-              const partialText = handleEvent(data);
-              if (partialText !== null) {
-                responseText += partialText;
-              }
+      function onData(line) {
+        if (line.startsWith('data: ')) {
+          const dataStr = line.substring(6);
+          if (dataStr !== '[DONE]') {
+            const data = JSON.parse(dataStr);
+            const partialText = handleEvent(data);
+            if (partialText !== null) {
+              responseText += partialText;
             }
           }
         }
+      }
 
-        responseData = '';
+      res.on('data', (chunk) => {
+        responseData += chunk;
+        debug(`Received data: ${chunk}\n`);
+        const lines = responseData.split('\n');
+        responseData = lines.pop();
+        for (const line of lines) {
+          onData(line);
+        }
       });
 
       res.on('end', () => {
+        if (responseData) {
+          onData(responseData);
+        }
         debug('Response ended\n');
         process.send({
           type: 'done',
