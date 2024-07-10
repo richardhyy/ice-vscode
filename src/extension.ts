@@ -135,6 +135,10 @@ export function activate(context: vscode.ExtensionContext) {
   }));
 }
 
+function getConfigurationValue<T>(key: string): T | undefined {
+  return vscode.workspace.getConfiguration('ice').get<T>(key);
+}
+
 class ProviderQuickPickerItem implements vscode.QuickPickItem {
   kind?: vscode.QuickPickItemKind | undefined;
   
@@ -165,6 +169,14 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.providerManager = new ProviderManager(context);
+  }
+
+  selectProvider(provider: Provider) {
+    this.currentProvider = provider;
+    const label = this.currentProvider.info['name'] || this.currentProvider.id;
+    updateProviderStatusBar(label);
+    postMessageToCurrentWebview({ type: 'selectProvider', providerID: this.currentProvider.id });
+    this.context.globalState.update(STATEKEY_PREVIOUS_PROVIDER_ID, this.currentProvider.id);
   }
 
   async showProviderPicker(showPreviousProvider: boolean) {
@@ -226,11 +238,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           if (selectedItem.label.startsWith('$(gear) Configure')) {
             await this.providerManager.openProviderConfig(this.currentProvider!.id);
           } else {
-            this.currentProvider = selectedProvider.provider;
-            const label = this.currentProvider.info['name'] || this.currentProvider.id;
-            updateProviderStatusBar(label);
-            postMessageToCurrentWebview({ type: 'selectProvider', providerID: this.currentProvider.id });
-            this.context.globalState.update(STATEKEY_PREVIOUS_PROVIDER_ID, this.currentProvider.id);
+            this.selectProvider(selectedProvider.provider);
           }
         } else if (selectedItem.label === openCustomProviderFolderLabel) {
           vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(customProviderFolder));
@@ -459,7 +467,13 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             }
           } else {
             // No provider selected, show the provider picker
-            this.showProviderPicker(true);  // true: show the previously selected provider for quick access
+            if (getConfigurationValue('usePreviousProviderForNewChat') === true && this.currentProvider) {
+              // Use the previous provider for new chat
+              this.selectProvider(this.currentProvider);
+            } else {
+              // Show the previously selected provider for quick access
+              this.showProviderPicker(true);
+            }
           }
           break;
         case 'confirmAction':

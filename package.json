@@ -216,7 +216,17 @@
         "icon": "$(gear)",
         "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && (messageRole == 'assistant' || messageRole == 'user')"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "ICE",
+      "properties": {
+        "ice.usePreviousProviderForNewChat": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically choose the last provider for new chat."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "yarn run package",
