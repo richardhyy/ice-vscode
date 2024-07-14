@@ -14,6 +14,7 @@ const conversationContainer = document.getElementById(
   "conversation-container"
 );
 const PARSER_PARAMETERS = {
+  ...marked.getDefaults(),
   "breaks": true
 };
 
