@@ -776,7 +776,7 @@ function _renderConfigNode(messageNode, message, clipContent, editing) {
     });
     messageNode.appendChild(codeMirrorContainer);
 
-    _renderEditor(codeMirrorContainer, message.id, _encodeConfig(JSON.parse(message.content)), "Type the configuration...",
+    const editor = _renderEditor(codeMirrorContainer, message.id, _encodeConfig(JSON.parse(message.content)), "Type the configuration...",
       (context) => {
         if (!providerConfigKeys[providerID]) {
           return null;
@@ -847,7 +847,7 @@ function _renderConfigNode(messageNode, message, clipContent, editing) {
     saveButtonElement.addEventListener("click", function () {
       // Submit editing
       _handleMessageSubmit(
-        JSON.stringify(_decodeConfig(inputElement.value)),
+        JSON.stringify(_decodeConfig(editor.state.doc.toString())),
         message
       );
     });
