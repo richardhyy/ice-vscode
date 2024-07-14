@@ -1,5 +1,21 @@
 # Change Log
 
+## [0.5.1] - 2024-07-14
+### Changed
+- Improved handling of empty messages
+- Improved attachment scroll behavior and message content width
+- Improved word wrapping message content when view width is small
+- Enabled find widget in chat view
+- Improved copy button icon color
+- Improved UI style for backquotes, links, and code blocks
+- Improved HTML/custom tag rendering in messages
+- Improved editor text color and selection color for dark themes
+
+### Fixed
+- Most recent Instant Chat file not correctly identified
+- Editor cursor might not be visible when using dark theme
+- Done button not working for config editor
+
 ## [0.5.0] - 2024-07-11
 ### Added
 - Support for showing the previously used provider at the top of the provider list when starting a new chat
