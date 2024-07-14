@@ -385,6 +385,10 @@ hr {
     box-sizing: border-box;
 }
 
+.config-content * {
+    user-select: text;
+}
+
 .config-content .no-config {
     color: var(--secondary-color);
     font-style: italic;
