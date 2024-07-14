@@ -13,6 +13,9 @@ const sendButton = document.getElementById("send-button");
 const conversationContainer = document.getElementById(
   "conversation-container"
 );
+const PARSER_PARAMETERS = {
+  "breaks": true
+};
 
 let flatMessages = {};
 let messageIDWithChildren = {}; // {messageID: [childID1, childID2, ...]}
@@ -250,60 +253,91 @@ function _handleMessageSubmit(content, message) {
   }
 }
 
+
 /**
- * Converts custom HTML tags to a specific format for rendering.
- * @param {string} html - The HTML string to convert.
- * @returns {string} The converted HTML string.
+ * Converts markdown to tokens, handling custom HTML tags.
+ * @param {string} markdown - The markdown string to convert.
+ * @returns {marked.TokensList} The converted tokens.
  */
-function _convertCustomTags(html) {
-  const parser = new DOMParser();
-  let doc = parser.parseFromString(html, 'text/html');
+function _convertMarkdownToTokens(markdown) {
+  let tokens = marked.lexer(markdown, PARSER_PARAMETERS);
 
-  const customTags = doc.querySelectorAll('*');
-  customTags.forEach((tag) => {
-    if (!['HTML', 'HEAD', 'BODY', 'DIV', 'SPAN', 'P', 'A', 'IMG', 'H1',
-        'H2', 'H3', 'H4', 'H5', 'H6', 'UL', 'OL', 'LI', 'CODE', 'PRE',
-        'BLOCKQUOTE', 'STRONG', 'EM', 'I', 'TABLE', 'THEAD', 'TBODY',
-        'TH', 'TD', 'TR', 'BR', 'HR'
-      ].includes(tag.tagName)) {
-      const tagName = tag.tagName.toLowerCase();
-      const customTag = document.createElement('div');
-      customTag.className = 'custom-tag';
-      customTag.dataset.tag = tagName;
+  // Process HTML tokens
+  function processTokens(tokens) {
+    return tokens.map(token => {
+      if (token.type === 'html') {
+        // Process custom HTML tags
+        const processed = _processHtmlToken(token);
+        return processed || token;
+      }
+      if (token.tokens) {
+        token.tokens = processTokens(token.tokens);
+      }
+      if (token.items) {
+        token.items = processTokens(token.items);
+      }
+      return token;
+    });
+  }
 
-      const heading = document.createElement('div');
-      heading.className = 'custom-tag-indicator';
-      heading.textContent = `<${tagName}>`;
-      customTag.appendChild(heading);
+  return processTokens(tokens);
+}
 
-      const content = document.createElement('span');
-      content.className = 'custom-tag-content';
-      content.innerHTML = tag.innerHTML;
-      customTag.appendChild(content);
 
-      const ending = document.createElement('div');
-      ending.className = 'custom-tag-indicator';
-      ending.textContent = `</${tagName}>`;
-      customTag.appendChild(ending);
+/**
+ * Escapes HTML characters in a string.
+ * @param {string} unsafe - The string to escape.
+ * @returns {string} The escaped string.
+ * @see https://stackoverflow.com/a/6234804
+ */
+function _escapeHtml(unsafe)
+{
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+ }
 
-      tag.parentNode.replaceChild(customTag, tag);
-    }
-  });
+/**
+ * Processes an HTML token, parsing any markdown content within custom tags.
+ * @param {Object} token - The HTML token to process.
+ * @returns {Object|null} The processed token or null if no processing was needed.
+ */
+function _processHtmlToken(token) {
+  const customTagRegex = /^<(\w+)>([\s\S]*)<\/\1>([\s\S]*)$/m;
+  const match = token.text.match(customTagRegex);
 
-  return doc.children[0].innerHTML;
+  if (match) {
+    const [, tag, content, trailing] = match;
+    console.log(`${token.text}\ntag: <${tag}>; content: ${content}`);
+    // Parse the content inside the custom tag
+    const innerTokens = _convertMarkdownToTokens(content);
+    const trailingTokens = _convertMarkdownToTokens(trailing);
+    return {
+      type: 'text',
+      raw: token.raw,
+      text: `&lt;${tag}&gt;` + marked.parser(innerTokens, PARSER_PARAMETERS) + `&lt;/${tag}&gt;` + marked.parser(trailingTokens, PARSER_PARAMETERS)
+    };
+  } else {
+    console.log(`No match for tag: ${token.text}`);
+    return {
+      type: 'text',
+      raw: token.raw,
+      text: _escapeHtml(token.text)
+    };
+  }
 }
 
 
 /**
  * Renders markdown content, optionally converting single line breaks.
  * @param {string} content - The markdown content to render.
- * @param {boolean} singleBreakForNewLine - Whether to convert single line breaks to <br> tags.
  * @returns {string} The rendered HTML string.
  */
-function _renderMarkdown(content, singleBreakForNewLine = false) {
-  return _convertCustomTags(marked.parse(content, {
-    "breaks": singleBreakForNewLine
-  }));
+function _renderMarkdown(content) {
+  return marked.parser(_convertMarkdownToTokens(content), PARSER_PARAMETERS);
 }
 
 
@@ -644,7 +678,7 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
       updateAttachments(message.id, message.attachments || [], false, attachmentContainer);
     }
   } else { // Not editing
-    const renderedContent = _renderMarkdown(message.content + (message.incomplete && message.content.length === 0 ? "..." : ""), message.role === "user");
+    const renderedContent = _renderMarkdown(message.content + (message.incomplete && message.content.length === 0 ? "..." : ""));
     const markdownContent = document.createElement("div");
     markdownContent.classList.add("markdown-content");
     messageContent.appendChild(markdownContent);
@@ -886,7 +920,7 @@ function _renderConfigNode(messageNode, message, clipContent, editing) {
 
         const valueElement = document.createElement("span");
         valueElement.classList.add("config-value");
-        valueElement.innerHTML = _renderMarkdown(config[key], true);
+        valueElement.innerHTML = _renderMarkdown(config[key]);
         rowElement.appendChild(valueElement);
 
         messageNode.appendChild(rowElement);
