@@ -21,6 +21,16 @@ export class InstantChatManager {
     return instantChatFolder;
   }
 
+  public createNewInstantChat(): string {
+    const chatFilePath = this.generateNewChatFilePath();
+    fs.writeFileSync(chatFilePath, '');
+    return chatFilePath;
+  }
+
+  public getLastInstantChat(): string | undefined {
+    return this.getLastChatFilePath();
+  }
+
   private generateNewChatFilePath(): string {
     // ./instantchat/<year>-<month>-<day>-<hour>-<minute>-<second>.chat
     const now = new Date();
@@ -31,21 +41,25 @@ export class InstantChatManager {
   }
 
   private getLastChatFilePath(): string | undefined {
-    const files = fs.readdirSync(this.getInstantChatFolder());
+    const files = fs.readdirSync(this.getInstantChatFolder())
+                    .filter(file => file.endsWith('.chat') && !file.startsWith('.'));
     if (files.length === 0) {
       return undefined;
     }
-    files.sort();
-    return path.join(this.getInstantChatFolder(), files[files.length - 1]);
+    
+    // Sort files based on their date-time values
+    files
+      .sort((a, b) => {
+        const dateA = this.extractDateFromFilename(a);
+        const dateB = this.extractDateFromFilename(b);
+        return dateB.getTime() - dateA.getTime(); // Sort in descending order
+      });
+  
+    return path.join(this.getInstantChatFolder(), files[0]); // Return the first (latest) file
   }
 
-  public createNewInstantChat(): string {
-    const chatFilePath = this.generateNewChatFilePath();
-    fs.writeFileSync(chatFilePath, '');
-    return chatFilePath;
-  }
-
-  public getLastInstantChat(): string | undefined {
-    return this.getLastChatFilePath();
+  private extractDateFromFilename(filename: string): Date {
+    const [year, month, day, hour, minute, second] = filename.split('.')[0].split('-').map(Number);
+    return new Date(year, month - 1, day, hour, minute, second);
   }
 }
