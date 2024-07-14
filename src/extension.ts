@@ -32,6 +32,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.window.registerCustomEditorProvider('chat-view.editor', chatViewProvider, {
     webviewOptions: {
       retainContextWhenHidden: true,
+      enableFindWidget: true,
     },
   }));
 
