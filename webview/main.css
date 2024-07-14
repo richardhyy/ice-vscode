@@ -27,6 +27,7 @@
     --button-background-color: var(--vscode-button-background);
     --button-text-color: var(--vscode-button-foreground);
     --button-primary-background-color: var(--vscode-button-background);
+    --copy-button-icon-color: var(--vscode-editorLineNumber-foreground);
     --config-key-color: var(--vscode-settings-headerForeground);
     --config-key-separator-color: var(--vscode-editorWidget-border);
     --config-value-color: var(--vscode-settings-dropdownForeground);
@@ -209,7 +210,7 @@ pre .copy-button:active {
 pre .copy-button svg {
     width: 50%;
     height: 50%;
-    color: var(--secondary-color);
+    color: var(--copy-button-icon-color);
     mix-blend-mode: exclusion;
 }
 
