@@ -502,6 +502,9 @@ function _renderEditor(codeMirrorContainer, id, content, placeholderText, autoco
             /* Still looking for a better solution */
             display: "none",
           },
+          "&.cm-focused .cm-cursor": {
+            borderLeftColor: "var(--vscode-editorCursor-foreground)",
+          },
         }),
         EditorView.updateListener.of((update) => {
           if (update.focusChanged) {
