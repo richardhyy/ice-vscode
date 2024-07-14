@@ -439,7 +439,7 @@ function _renderAttachments(messageID, attachments, editing, attachmentContainer
  * @returns {EditorView} The created CodeMirror editor instance.
  */
 function _renderEditor(codeMirrorContainer, id, content, placeholderText, autocompletionCallback, submitCallback) {
-  const selectionColor = window.getComputedStyle(document.documentElement).getPropertyValue('--vscode-list-inactiveSelectionBackground');
+  const selectionColor = window.getComputedStyle(document.documentElement).getPropertyValue('--vscode-editor-selectionBackground');
   const codeMirrorView = new EditorView({
     state: EditorState.create({
       doc: content,
@@ -485,7 +485,7 @@ function _renderEditor(codeMirrorContainer, id, content, placeholderText, autoco
             outline: "none",
           },
           ".cm-line": {
-            color: "var(--assistant-message-text-color)",
+            color: "var(--vscode-editor-foreground)",
             fontFamily: "sans-serif",
           },
           ".cm-activeLine": {
@@ -496,6 +496,7 @@ function _renderEditor(codeMirrorContainer, id, content, placeholderText, autoco
           },
           ".cm-selectionBackground": {
             backgroundColor: selectionColor + " !important",
+            opacity: "0.8",
           },
           ".cm-announced": {
             /* If we don't set this, the height of the page will be confusingly changed */
