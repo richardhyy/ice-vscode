@@ -633,6 +633,10 @@ hr {
     height: 3px;
 }
 
+.attachment-scroll {
+    overflow-x: auto;
+}
+
 .attachment-container .file {
     width: 3em;
     height: 4.85em;
@@ -642,6 +646,7 @@ hr {
     padding: var(--padding);
     margin: 0;
     position: relative;
+    flex-shrink: 0;
 }
 
 .attachment-container .file::before {
@@ -993,5 +998,9 @@ hr {
 @media (max-width: 600px) {
     .message-content {
         max-width: 100%;
+    }
+
+    .message-content.editing {
+        max-width: 70vw;
     }
 }
