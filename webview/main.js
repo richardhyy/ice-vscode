@@ -592,7 +592,7 @@ function _messageEditorAutoComplete(context) {
  * @param {boolean} editing - Whether the message is being edited.
  */
 function _renderBubbleMessage(messageNode, message, clipContent, editing) {
-  if (editing) {
+  if (editing && !message.isShadow) {
     const cancelButtonElement = document.createElement("button");
     cancelButtonElement.className =
       "edit-operation-button edit-operation-button-cancel";
@@ -678,17 +678,20 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
       updateAttachments(message.id, message.attachments || [], false, attachmentContainer);
     }
   } else { // Not editing
-    const renderedContent = _renderMarkdown(message.content + (message.incomplete && message.content.length === 0 ? "..." : ""));
+    const renderedContent = _renderMarkdown(message.content + (message.content.length === 0 ? (message.incomplete ? "..." : "(empty)") : ""));
     const markdownContent = document.createElement("div");
     markdownContent.classList.add("markdown-content");
+    if (message.content.length === 0) {
+      markdownContent.classList.add("empty");
+    }
     messageContent.appendChild(markdownContent);
     if (clipContent) {
       const clippedContent = document.createElement("div");
       clippedContent.classList.add("clipped-content");
-      clippedContent.innerHTML = renderedContent
+      clippedContent.innerHTML = renderedContent;
       markdownContent.appendChild(clippedContent);
     } else {
-      markdownContent.innerHTML = renderedContent
+      markdownContent.innerHTML = renderedContent;
     }
 
     if (!message.incomplete) {

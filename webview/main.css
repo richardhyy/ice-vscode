@@ -547,6 +547,10 @@ hr {
     user-select: text;
 }
 
+.message-content .empty {
+    opacity: 0.5;
+}
+
 .codemirror-container {
     flex-grow: 1;
     font-family: inherit;
