@@ -18,7 +18,6 @@
     --code-block: var(--vscode-textCodeBlock-background);
     --shadow-color: var(--vscode-widget-shadow);
     --shadow-color-soft: var(--vscode-scrollbar-shadow);
-    --link-color: var(--vscode-textLink-foreground);
     --blockquote-color: var(--vscode-textBlockQuote-background);
     --blockquote-border-color: var(--vscode-textBlockQuote-border);
     --code-color: var(--vscode-textPreformat-foreground);
@@ -118,20 +117,26 @@ h6::before {
 }
 
 /* Headers, links, and blockquotes */
-a {
-    color: var(--link-color);
-    text-decoration: none;
+.message-container a {
+    color: var(--user-message-text-color);
+    text-decoration: underline;
+    text-decoration-style: dashed;
+}
+
+.message-container.user a {
+    color: var(--user-message-text-color);
 }
 
 a:hover {
-    text-decoration: underline;
+    text-decoration-style: solid;
 }
 
 blockquote {
-    color: var(--blockquote-color);
     border-left: 4px solid var(--blockquote-border-color);
     padding-left: 1em;
     margin: 1em 0;
+    background-color: color-mix(in srgb, var(--code-block) 80%, var(--shadow-color));
+    padding: 1em;
 }
 
 /* Lists */
@@ -147,7 +152,7 @@ code {
 }
 
 pre {
-    background-color: color-mix(in srgb, var(--code-block) 40%, var(--shadow-color));
+    background-color: color-mix(in srgb, var(--code-block) 80%, var(--shadow-color));
     color: inherit;
     padding: 1em;
     white-space: pre-wrap;
