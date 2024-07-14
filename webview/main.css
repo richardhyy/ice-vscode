@@ -149,7 +149,6 @@ ul, ol {
 code {
     color: inherit;
     font-family: monospace;
-    word-wrap: break-word;
 }
 
 pre {
@@ -527,6 +526,7 @@ hr {
 
 .message-content * {
     user-select: text;
+    word-break: break-word;
 }
 
 .message-content {
@@ -693,7 +693,7 @@ hr {
     font-size: var(--fs-footnote);
     font-weight: 500;
     color: var(--file-name-color);
-    word-wrap: break-word;
+    word-break: break-word;
     text-align: center;
     margin-top: 0.5em;
     overflow: hidden;
