@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>
+      ICE - VSCode LLM Integration | Multi-Provider Chat, Editable Tree Based
+      Histories
+    </title>
+    <meta
+      name="keywords"
+      content="VSCode extension, LLM integration, developer tools, OpenAI, ChatGPT, Anthropic, Google AI, custom AI providers, chat history management, version control, multi-provider LLM client, flexible LLM, inline configuration editing, AI conversation forking, snippets, YAML chat files, JavaScript AI providers, code assistance, AI-powered development"
+    />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+    <meta name="description" content="Description" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, minimum-scale=1.0"
+    />
+    <link rel="stylesheet" href="//cdn.jsdelivr.net/npm/docsify/themes/buble.css" />
+    </head>
+    <style>
+      :root {
+        --cover-bg-middle-color: rgba(255, 255, 255, 0.8);
+        --cover-bg-end-color: rgba(255, 255, 255, 0.5);
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+          sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+      }
+
+      .cover-main {
+        position: absolute !important;
+        height: 80%;
+        width: 100%;
+        top: 0;
+        background: linear-gradient(
+          180deg,
+          var(--cover-bg-middle-color) 0%,
+          var(--cover-bg-middle-color) 60%,
+          var(--cover-bg-end-color) 100%
+        );
+        box-shadow: 0px 0px 25px 25px var(--cover-bg-end-color);
+        padding: 5em;
+        border-radius: 10px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+    </style>
+  <body>
+    <div id="app"></div>
+    <script>
+      window.$docsify = {
+        name: "ICE - VSCode LLM Integration",
+        nameLink: {
+          "/ja/": "/ja/",
+          "/": "/",
+        },
+        repo: "https://github.com/richardhyy/ice-vscode",
+        coverpage: {
+          "/ja/": "_coverpage.md",
+          "/": "_coverpage.md"
+        },
+        loadSidebar: true,
+        loadNavbar: true,
+      };
+    </script>
+    <!-- Docsify v4 -->
+    <script src="//cdn.jsdelivr.net/npm/docsify@4"></script>
+  </body>
+</html>

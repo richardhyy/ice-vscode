@@ -2,7 +2,7 @@
 
 ICE (Integrated Conversational Environment) is a flexible, easy-to-use VSCode extension that allows users to experiment with conversational AI using various large language models (LLMs). With ICE, you can easily chat with LLMs, manage conversation histories, and even create custom LLM integrations.
 
-![ICE Screenshot](images/screenshot.png)
+![ICE Screenshot](docs/images/screenshot.png)
 
 > ❓ **Wondering how to use?** 
 >
@@ -78,13 +78,13 @@ You can switch between branches by clicking "Branches" below a message, then sel
 
 > **Tip:** The "Resend" and "Regenerate" options will also fork the conversation.
 
-![Branching](images/branching.png)
+![Branching](docs/images/branching.png)
 
 ### Editing Messages
 
 Right-click on a message, then select "Edit" to modify the message. You can change both user and LLM messages.
 
-![Editing Messages](images/editing.png)
+![Editing Messages](docs/images/editing.png)
 
 ### Inline Configuration Editing
 
@@ -98,7 +98,7 @@ You can also right-click on any message and select "Insert Configuration" to qui
 
 Autocompletion is available for configuration keys, and forking is supported for configuration changes.
 
-![Inline Configuration Editing](images/configuration.png)
+![Inline Configuration Editing](docs/images/configuration.png)
 
 ### Message Snippets
 
@@ -110,7 +110,7 @@ When typing a message, you can enter `/YourSnippetName` to insert the snippet.
 
 Right-click on a message editor and select "Manage Snippets" to view, edit, and delete snippets.
 
-![Message Snippet](images/snippet.png)
+![Message Snippet](docs/images/snippet.png)
 
 ## Requirements
 

@@ -1,0 +1,18 @@
+- [Home](/)
+- [What is ICE?](?id=what-is-ice)
+- Getting Started
+  - [Installation](installation.md)
+  - [Basic Usage](basic-usage.md)
+- [Features](features.md)
+  - [Chat Providers](chat-providers.md)
+  - [Conversation Management](conversation-management.md)
+  - [Forking and Editing](forking-and-editing.md)
+  - [Inline Configuration](inline-configuration.md)
+  - [Message Snippets](message-snippets.md)
+  - [Instant Chat](instant-chat.md)
+- Advanced Topics
+  - [Custom Providers](custom-providers.md)
+  - [Provider Configurations](provider-configurations.md)
+- [FAQ](faq.md)
+- [Contributing](contributing.md)
+- [Changelog](https://github.com/richardhyy/ice-vscode/blob/main/CHANGELOG.md)

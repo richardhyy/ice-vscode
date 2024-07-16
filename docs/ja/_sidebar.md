@@ -1,0 +1,18 @@
+- [ホーム](/ja/)
+- [ICEとは？](/ja/?id=what-is-ice)
+- はじめに
+  - [インストール](/ja/installation.md)
+  - [基本的な使い方](/ja/basic-usage.md)
+- [機能](/ja/features.md)
+  - [チャットプロバイダー](/ja/chat-providers.md)
+  - [会話管理](/ja/conversation-management.md)
+  - [フォークと編集](/ja/forking-and-editing.md)
+  - [インライン設定](/ja/inline-configuration.md)
+  - [メッセージスニペット](/ja/message-snippets.md)
+  - [インスタントチャット](/ja/instant-chat.md)
+- 高度なトピック
+  - [カスタムプロバイダー](/ja/custom-providers.md)
+  - [プロバイダー設定](/ja/provider-configurations.md)
+- [よくある質問](/ja/faq.md)
+- [貢献](/ja/contributing.md)
+- [変更履歴](https://github.com/richardhyy/ice-vscode/blob/main/CHANGELOG.md)
