@@ -155,7 +155,7 @@ function scanMessageTree() {
  */
 function getMessageConfig(messageID) {
   let config = {};
-  for (const id of activePath) {
+  for (const id of getPathWithMessage(messageID)) {
     const currentMessage = flatMessages[id];
     if (currentMessage.role === "#config") {
       config = {
@@ -1207,10 +1207,11 @@ function handleLoadActions(actions, append = false) {
 /**
  * Inserts a configuration update message into the conversation.
  * @param {string} parentID - The ID of the parent message.
+ * @param {string|null} nextID - The ID of the next message.
  * @param {Object} content - The content of the configuration update.
  * @returns {string} The ID of the newly created configuration message.
  */
-function insertConfigUpdate(parentID, content = {}) {
+function insertConfigUpdate(parentID, nextID, content = {}) {
   const id = Date.now();
   const configMessage = {
     id: id,
@@ -1221,6 +1222,17 @@ function insertConfigUpdate(parentID, content = {}) {
   };
   updateFlatMessages(configMessage);
   addMessage(configMessage);
+  if (nextID) {
+    flatMessages[nextID].parentID = id;
+    updateFlatMessages(flatMessages[nextID]);
+    vscode.postMessage({
+      type: "editMessage",
+      messageID: nextID,
+      updates: {
+        parentID: id,
+      },
+    });
+  }
   return id;
 }
 
@@ -1265,7 +1277,7 @@ function handleUpdateConfig(config) {
     scanMessageTree();
     rerenderMessage(lastMessage.id);
   } else { // Create a new config message
-    const configMessageID = insertConfigUpdate(lastMessage ? lastMessage.id : null, config);
+    const configMessageID = insertConfigUpdate(lastMessage ? lastMessage.id : null, null, config);
 
     scanMessageTree();
     activePath = getPathWithMessage(configMessageID);
@@ -1319,6 +1331,21 @@ function handleUpdateMessage(message, incomplete = false) {
  */
 function deleteMessage(messageID) {
   const message = flatMessages[messageID];
+  if (message && message.role === "#config") {
+    // If the message is a config, check if it has next messages
+    // If it has, link the next messages to the parent message
+    const nextMessages = messageIDWithChildren[messageID];
+    if (nextMessages && nextMessages.length > 0) {
+      const parentMessage = flatMessages[message.parentID];
+      if (parentMessage) {
+        nextMessages.forEach((nextMessageID) => {
+          const nextMessage = flatMessages[nextMessageID];
+          nextMessage.parentID = parentMessage.id;
+          updateFlatMessages(nextMessage);
+        });
+      }
+    }
+  }
   delete flatMessages[messageID];
   scanMessageTree();
   activePath = getPathWithMessage(message.parentID);
@@ -1473,14 +1500,25 @@ function contextMenuOperation(operation, subOperation) {
     case "insertConfigUpdate":
       const position = subOperation;
       let parentID;
+      let nextID;
       if (position === "before") {
         parentID = flatMessages[messageID].parentID;
+        nextID = messageID;
       } else if (position === "after") {
         parentID = messageID;
+        const currentMessageIndexInPath = activePath.findIndex((id) => String(id) === messageID);
+        if (currentMessageIndexInPath !== -1 && currentMessageIndexInPath < activePath.length - 1) {
+          // TODO: Fix this
+          nextID = activePath[currentMessageIndexInPath + 1];
+        } else {
+          nextID = null;
+        }
       } else {
         console.error("Unknown position", position);
         return;
       }
+      console.log(activePath);
+      console.log("Inserting config update before", parentID, "next", nextID);
       if (!flatMessages[parentID]) {
         vscode.postMessage({
           type: "error",
@@ -1488,7 +1526,7 @@ function contextMenuOperation(operation, subOperation) {
         });
         return;
       }
-      const id = insertConfigUpdate(parentID);
+      const id = insertConfigUpdate(parentID, nextID);
       scanMessageTree();
       activePath = getPathWithMessage(id);
       renderConversation();
