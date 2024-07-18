@@ -760,8 +760,10 @@ function _checkConfig(content) {
  * @param {string} providerID - The ID of the provider.
  * @param {HTMLElement} editorContainer - The container element for the editor.
  * @param {string} configKeyContainerID - The ID of the container for config keys.
+ * @param {string} messageID - The ID of the message being edited.
+ * @returns {Array<{label: string, apply: string, type: string, detail: string}>} The available config keys.
  */
-function _updateAvailableConfigKeys(providerID, editorContainer, configKeyContainerID) {
+function _updateAvailableConfigKeys(providerID, editorContainer, configKeyContainerID, messageID) {
   const configKeyContainer = document.getElementById(configKeyContainerID);
   configKeyContainer.innerHTML = "";
   const editor = EditorView.findFromDOM(editorContainer);
@@ -769,9 +771,11 @@ function _updateAvailableConfigKeys(providerID, editorContainer, configKeyContai
     return;
   }
 
+  let result = [];
+
   const config = _decodeConfig(editor.state.doc.toString());
 
-  function createKeyToken(key, group) {
+  function createKeyToken(key, group, type, detail = undefined) {
     const tokenElement = document.createElement("span");
     tokenElement.classList.add("config-key-token");
     tokenElement.textContent = key;
@@ -784,23 +788,42 @@ function _updateAvailableConfigKeys(providerID, editorContainer, configKeyContai
         },
       });
       editor.focus();
-      _updateAvailableConfigKeys(configKeyContainer);
+      _updateAvailableConfigKeys(providerID, editorContainer, configKeyContainerID, messageID);
     });
     configKeyContainer.appendChild(tokenElement);
+
+    result.push({
+      label: key + " = ",
+      apply: key + " = ",
+      type: type,
+      detail: detail
+    });
+  }
+
+  // Add variable prefix key
+  createKeyToken("$", "New Variable", "syntax", "New variable");
+
+  // Add variables
+  for (let key in getMessageConfig(messageID)) {
+    if (key.startsWith("$")) {
+      createKeyToken(key, "Variable", "variable");
+    }
   }
 
   for (let group of Object.keys(providerConfigKeys[providerID])) {
     for (let key of providerConfigKeys[providerID][group]) {
       if (config[key] === undefined) {
-        createKeyToken(key, group);
+        createKeyToken(key, group, `config-key-${group}`);
       }
     }
   }
 
   // Add the Provider key
   if (config["Provider"] === undefined) {
-    createKeyToken("Provider", "Chat Provider");
+    createKeyToken("Provider", "Chat Provider", "config-key-Provider");
   }
+
+  return result;
 }
 
 
@@ -836,43 +859,35 @@ function _renderConfigNode(messageNode, message, clipContent, editing) {
         if (!providerConfigKeys[providerID]) {
           return null;
         }
-
-        _updateAvailableConfigKeys(providerID, codeMirrorContainer, configKeyContainer.id);
-
-        const before = context.matchBefore(/^\s*(\w+)/);
-
+      
+        const autocompleteItems = _updateAvailableConfigKeys(providerID, codeMirrorContainer, configKeyContainer.id, message.id);
+      
+        const before = context.matchBefore(/^\s*(\$?\S*)/);
+      
         if (!before) {
           return null;
         }
-
+      
+        const matchedText = before.text.trim().toLowerCase();
+        const filteredItems = autocompleteItems.filter(item => 
+          item.label.toLowerCase().includes(matchedText)
+        );
+      
         return {
           from: before.from,
-          options: [
-            ...Object.keys(providerConfigKeys[providerID])
-            .map((group) => ([group, providerConfigKeys[providerID][group]]))
-            .map(([group, keys]) => keys.map((key) => ({
-              label: key,
-              apply: key + ' = ',
-              type: `config-key-${group}`
-            }))).flat(),
-            {
-              label: "Provider",
-              apply: "Provider = ",
-              type: "config-key-Provider"
-            }
-          ],
-          validFor: /\s*$/.test(before.text),
+          options: filteredItems,
+          validFor: /^\s*\$?\S*$/.test(before.text),
         };
       },
       (content) => {
-        const error = _checkConfig(content);
-        if (error) {
-          validityCheckElement.textContent = error;
-          validityCheckElement.classList.add("invalid");
-        } else {
-          _handleMessageSubmit(JSON.stringify(_decodeConfig(content)), message);
-        }
-      });
+      const error = _checkConfig(content);
+      if (error) {
+        validityCheckElement.textContent = error;
+        validityCheckElement.classList.add("invalid");
+      } else {
+        _handleMessageSubmit(JSON.stringify(_decodeConfig(content)), message);
+      }
+    });
 
     const operationBar = document.createElement("div");
     operationBar.classList.add("operation-bar");
