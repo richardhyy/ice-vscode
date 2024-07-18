@@ -405,6 +405,10 @@ hr {
     color: var(--config-key-color);
 }
 
+.config-content .config-key.variable-name {
+    color: var(--accent-color);
+}
+
 .config-content .config-key::after {
     content: ": ";
     color: var(--config-key-separator-color);
