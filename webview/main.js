@@ -692,7 +692,7 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
       updateAttachments(message.id, message.attachments || [], false, attachmentContainer);
     }
   } else { // Not editing
-    const renderedContent = _renderMarkdown(message.content + (message.content.length === 0 ? (message.incomplete ? "..." : "(empty)") : ""));
+    let renderedContent = _renderMarkdown(message.content + (message.content.length === 0 ? (message.incomplete ? "..." : "(empty)") : ""));
     const markdownContent = document.createElement("div");
     markdownContent.classList.add("markdown-content");
     if (message.content.length === 0) {
@@ -705,6 +705,17 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
       clippedContent.innerHTML = renderedContent;
       markdownContent.appendChild(clippedContent);
     } else {
+      if (message.role === "user") {
+        const variableRegex = /{{\s*([^\s]+)\s*}}/g;
+        // Replace variable placeholders with styled spans
+        renderedContent = renderedContent.replace(variableRegex, (match, variableName) => {
+          return `<span class="variable-wrapper" title="${match}">
+                    <span class="variable-delimiter">{{ </span>
+                    <span class="variable-placeholder">${variableName}</span>
+                    <span class="variable-delimiter"> }}</span>
+                  </span>`;
+        });        
+      }
       markdownContent.innerHTML = renderedContent;
     }
 
