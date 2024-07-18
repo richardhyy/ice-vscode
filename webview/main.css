@@ -22,8 +22,8 @@
     --blockquote-border-color: var(--vscode-textBlockQuote-border);
     --code-color: var(--vscode-textPreformat-foreground);
     --table-border-color: var(--vscode-editorWidget-border);
-    --custom-tag-color: var(--vscode-editor-foreground);
-    --custom-tag-indicator-color: var(--vscode-editorLightBulb-foreground);
+    --user-message-placeholder-background-color: color-mix(in srgb, var(--user-message-background-color) 80%, var(--code-block));
+    --user-message-placeholder-color: var(--user-message-text-color);
     --button-background-color: var(--vscode-button-background);
     --button-text-color: var(--vscode-button-foreground);
     --button-primary-background-color: var(--vscode-button-background);
@@ -254,16 +254,37 @@ hr {
     margin: 1em 0;
 }
 
-.custom-tag {
-    display: block;
-    color: var(--custom-tag-color);
-    margin: 0.2em 0;
+.variable-wrapper {
+    display: inline-block;
+    position: relative;
+    vertical-align: baseline;
 }
 
-.custom-tag .custom-tag-indicator {
-    display: block;
-    color: var(--custom-tag-indicator-color);
-    font-weight: 400;
+.variable-placeholder {
+    display: inline-block;
+    font-size: 0.85em;
+    padding: 0 4px;
+    border: 1px solid var(--user-message-placeholder-color);
+    border-radius: var(--border-radius-small);
+    color: var(--user-message-placeholder-color);
+    background-color: var(--user-message-placeholder-background-color);
+    vertical-align: baseline;
+}
+
+.variable-delimiter {
+    position: absolute;
+    top: 0;
+    color: transparent;
+    user-select: text;
+    pointer-events: none;
+}
+
+.variable-delimiter:first-child {
+    left: 0;
+}
+
+.variable-delimiter:last-child {
+    right: 0;
 }
 
 @keyframes fadeIn {
