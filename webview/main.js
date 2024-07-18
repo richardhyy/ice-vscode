@@ -563,29 +563,6 @@ function _renderEditor(codeMirrorContainer, id, content, placeholderText, autoco
 
 
 /**
- * Provides autocompletion for the message editor.
- * @param {Object} context - The autocompletion context.
- * @returns {Object|null} The autocompletion result or null if no completion is available.
- */
-function _messageEditorAutoComplete(context) {
-  const before = context.matchBefore(/\/(\w+)/);
-  if (!before) {
-    return null;
-  }
-
-  return {
-    from: before.from,
-    options: Object.entries(snippets).map(([completion, content]) => ({
-      label: "/" + completion,
-      apply: content,
-      type: "snippet",
-    })),
-    validFor: /^\s*$/.test(before.text),
-  };
-}
-
-
-/**
  * Renders a bubble message in the conversation.
  * @param {HTMLElement} messageNode - The container node for the message.
  * @param {Object} message - The message object to render.
@@ -630,6 +607,14 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
     messageContentEditing.classList.add("message-content-editing");
     messageContent.appendChild(messageContentEditing);
 
+    let variableKeys = [];
+    if (message.role === "user") {  // Only user messages can have variables
+      const configObj = getMessageConfig(message.isShadow ? message.parentID : message.id);
+      variableKeys = Object.keys(configObj).filter((key) => key.startsWith("$")).map((key) => key.slice(1));
+    }
+
+    console.log("Config keys", variableKeys);
+
     // Create a CodeMirror editor instance
     const codeMirrorContainer = document.createElement("div");
     codeMirrorContainer.classList.add("codemirror-container");
@@ -640,7 +625,35 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
     messageContentEditing.appendChild(codeMirrorContainer);
 
     const placeholderText = message.role === "user" ? "Type a message..." : "Type a response...";
-    const editor = _renderEditor(codeMirrorContainer, message.id, message.content, placeholderText, _messageEditorAutoComplete, (content) => {
+    const editor = _renderEditor(codeMirrorContainer, message.id, message.content, placeholderText, 
+    (context) => {
+      const before = context.matchBefore(/\/(\w*)|(\{\{?\s*\w*)|(\$\w*)|(\w+)/);
+      if (!before) {
+        return null;
+      }
+    
+      const options = [
+        ...Object.entries(snippets).map(([completion, content]) => ({
+          label: "/" + completion,
+          apply: content,
+          type: "text",
+        })),
+        ...variableKeys.map((key) => ({
+          label: "{{ " + key + " }}",
+          apply: "{{ " + key + " }}",
+          type: "variable",
+        }))
+      ];
+      
+      const value = {
+        from: before.from,
+        options: options,
+        validFor: /^(\/\w*|\{\{?\s*\w*|\$\w*|\w*)$/,
+      };
+      console.log("Autocompletion value", value);
+      return value;
+    }, 
+    (content) => {
       _handleMessageSubmit(content, message);
     });
 
@@ -1693,7 +1706,7 @@ function sendMessage(leafMessage) {
   const fullPath = getPathWithMessage(leafMessage.id);
   const leafMessageIndex = fullPath.indexOf(leafMessage.id);
   const path = fullPath.slice(0, leafMessageIndex + 1);
-  const config = getMessageConfig(leafMessage.id)
+  const config = getMessageConfig(leafMessage.id);
   vscode.postMessage({
     type: "sendMessage",
     config: config,

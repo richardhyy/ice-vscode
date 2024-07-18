@@ -354,7 +354,38 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
 
           updateProviderStatusBar(provider?.info['name'] || provider?.id);
 
-          const messageTrail: [ChatMessage] = message.messageTrail.filter((m: ChatMessage) => !m.role.startsWith('#'));
+          let messageTrail: ChatMessage[] = [];
+          let variableValueMap = new Map<string, string>();
+          for (const m of message.messageTrail) {
+            if (m.role === '#config') {
+              // Extract the variables from the config message
+              const config: any = yaml.load(m.content);
+              if (config) {
+                for (const key of Object.keys(config)) {
+                  if (!key.startsWith('$')) {
+                    continue;
+                  }
+
+                  const value = config[key];
+                  variableValueMap.set(key.substring(1), value);
+                }
+
+                console.log(`Message ID ${m.id}: Variables extracted from config`, variableValueMap);
+              }
+            } else if (!m.role.startsWith('#')) {
+              // Fill variables in the message content
+              // Variable is formatted as {{ variableName }} or {{variableName}} in the message content
+              let newMessage = { ...m };
+              if (m.role === 'user') {
+                // Fill the variables in the user message
+                newMessage.content = m.content.replace(/{{\s*([^\s]+)\s*}}/g, (match: any, variableName: string) => {
+                  console.log(`Message ID ${m.id}: Replacing variable ${variableName} with value`, variableValueMap.get(variableName) || match);
+                  return variableValueMap.get(variableName) || match;
+                });
+              }
+              messageTrail.push(newMessage);
+            }
+          }
 
           // Process the message attachments before passing to the provider
           const needPreprocess = (provider?.info['_needAttachmentPreprocessing'] || 'true') === 'true';
