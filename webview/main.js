@@ -854,29 +854,27 @@ function _renderConfigNode(messageNode, message, clipContent, editing) {
     });
     messageNode.appendChild(codeMirrorContainer);
 
+    let autocompleteItems = [];
+
     const editor = _renderEditor(codeMirrorContainer, message.id, _encodeConfig(JSON.parse(message.content)), "Type the configuration...",
       (context) => {
         if (!providerConfigKeys[providerID]) {
           return null;
         }
       
-        const autocompleteItems = _updateAvailableConfigKeys(providerID, codeMirrorContainer, configKeyContainer.id, message.id);
+        if (autocompleteItems.length === 0) {
+          autocompleteItems = _updateAvailableConfigKeys(providerID, codeMirrorContainer, configKeyContainer.id, message.id);
+        }
       
-        const before = context.matchBefore(/^\s*(\$?\S*)/);
+        const before = context.matchBefore(/^\w*/);
       
         if (!before) {
           return null;
         }
       
-        const matchedText = before.text.trim().toLowerCase();
-        const filteredItems = autocompleteItems.filter(item => 
-          item.label.toLowerCase().includes(matchedText)
-        );
-      
         return {
           from: before.from,
-          options: filteredItems,
-          validFor: /^\s*\$?\S*$/.test(before.text),
+          options: autocompleteItems,
         };
       },
       (content) => {
