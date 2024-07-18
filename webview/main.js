@@ -474,7 +474,7 @@ function _renderAttachments(messageID, attachments, editing, attachmentContainer
  * @returns {EditorView} The created CodeMirror editor instance.
  */
 function _renderEditor(codeMirrorContainer, id, content, placeholderText, autocompletionCallback, submitCallback) {
-  const selectionColor = window.getComputedStyle(document.documentElement).getPropertyValue('--vscode-editor-selectionBackground');
+  const selectionColor = "color-mix(in srgb, var(--accent-color) 5%, var(--vscode-editor-selectionBackground))";
   const codeMirrorView = new EditorView({
     state: EditorState.create({
       doc: content,
@@ -930,7 +930,7 @@ function _renderConfigNode(messageNode, message, clipContent, editing) {
         providerID: providerID,
       });
     }
-  } else {
+  } else {  // Not editing
     const config = JSON.parse(message.content);
 
     if (Object.keys(config).length === 0) {
@@ -945,6 +945,9 @@ function _renderConfigNode(messageNode, message, clipContent, editing) {
 
         const keyElement = document.createElement("span");
         keyElement.classList.add("config-key");
+        if (key.startsWith("$")) {
+          keyElement.classList.add("variable-name");
+        }
         keyElement.textContent = key;
         rowElement.appendChild(keyElement);
 
