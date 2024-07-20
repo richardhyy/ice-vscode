@@ -86,8 +86,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(statusBarItem);
 
   // Register message handlers
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.duplicate', async () => {
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'duplicate' });
+  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.fork', async () => {
+    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'fork' });
   }));
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.delete', async () => {
     vscode.window.showQuickPick(['Yes', 'No'], { placeHolder: 'Are you sure you want to delete this message?' }).then((value) => {
