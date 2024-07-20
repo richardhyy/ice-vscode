@@ -163,6 +163,11 @@ function getMessageConfig(messageID) {
         ...JSON.parse(currentMessage.content)
       };
     }
+
+    if (id === messageID) {
+      // Stop at the target message
+      break;
+    }
   }
   return config;
 }
@@ -706,15 +711,37 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
       markdownContent.appendChild(clippedContent);
     } else {
       if (message.role === "user") {
+        const config = getMessageConfig(message.id);
+        const variableKeyValueMap = Object.entries(config).filter(([key, value]) => key.startsWith("$")).map(([key, value]) => [key.slice(1), value]);
+        
+        function processVariables(content, isCodeBlock) {
         const variableRegex = /{{\s*([^\s]+)\s*}}/g;
-        // Replace variable placeholders with styled spans
-        renderedContent = renderedContent.replace(variableRegex, (match, variableName) => {
-          return `<span class="variable-wrapper" title="${match}">
-                    <span class="variable-delimiter">{{ </span>
-                    <span class="variable-placeholder">${variableName}</span>
-                    <span class="variable-delimiter"> }}</span>
-                  </span>`;
-        });        
+          return content.replace(variableRegex, (match, variableName) => {
+            if (variableKeyValueMap.find(([key, value]) => key === variableName)) {
+              if (isCodeBlock) {
+                // For code blocks, we don't add any HTML, just return the original match
+                return match;
+              } else {
+                // For non-code blocks, we use the HTML structure
+                return `<span class="variable-wrapper" title="${match}"><span class="variable-delimiter">{{</span><span class="variable-placeholder">${variableName}</span><span class="variable-delimiter">}}</span></span>`;
+              }
+            } else {
+              return match;
+            }
+          });
+        }
+        
+        const codeBlockRegex = /(<pre><code[^>]*>)([\s\S]*?)(<\/code><\/pre>)/gi;
+        
+        renderedContent = renderedContent.replace(codeBlockRegex, (match, openTag, codeContent, closeTag) => {
+          // For code blocks, we process variables but don't add HTML structure
+          const processedCodeContent = processVariables(codeContent, true);
+          // We still wrap the content in preserve-whitespace, but don't add any other HTML
+          return `${openTag}<span class="preserve-whitespace">${processedCodeContent}</span>${closeTag}`;
+        });
+        
+        // Process variables outside of code blocks
+        renderedContent = processVariables(renderedContent, false);
       }
       markdownContent.innerHTML = renderedContent;
     }
