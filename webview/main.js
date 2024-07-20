@@ -715,7 +715,7 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
         const variableKeyValueMap = Object.entries(config).filter(([key, value]) => key.startsWith("$")).map(([key, value]) => [key.slice(1), value]);
         
         function processVariables(content, isCodeBlock) {
-        const variableRegex = /{{\s*([^\s]+)\s*}}/g;
+          const variableRegex = /{{\s*([^\s]+)\s*}}/g;
           return content.replace(variableRegex, (match, variableName) => {
             if (variableKeyValueMap.find(([key, value]) => key === variableName)) {
               if (isCodeBlock) {
@@ -1520,14 +1520,11 @@ function contextMenuOperation(operation, subOperation) {
   }
 
   switch (operation) {
-    case "duplicate":
+    case "fork":
       const message = flatMessages[messageID];
       const newMessage = {
+        ...message,
         id: Date.now(),
-        role: message.role,
-        content: message.content,
-        provider: message.provider,
-        parentID: message.parentID,
         timestamp: new Date().toISOString(),
       };
       updateFlatMessages(newMessage);

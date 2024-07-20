@@ -51,12 +51,12 @@
       },
       {
         "command": "chat-view.message.toggleEdit",
-        "title": "Toggle Edit",
+        "title": "Edit",
         "category": "Chat View Context"
       },
       {
-        "command": "chat-view.message.duplicate",
-        "title": "Duplicate",
+        "command": "chat-view.message.fork",
+        "title": "Fork",
         "category": "Chat View Context"
       },
       {
@@ -168,11 +168,11 @@
         },
         {
           "command": "chat-view.message.toggleEdit",
-          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head'",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head' && !isEditor",
           "group": "message_operations"
         },
         {
-          "command": "chat-view.message.duplicate",
+          "command": "chat-view.message.fork",
           "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head'",
           "group": "message_operations"
         },
