@@ -258,7 +258,7 @@ hr {
     display: inline-block;
     position: relative;
     vertical-align: baseline;
-}
+}  
 
 .variable-placeholder {
     display: inline-block;
@@ -286,6 +286,21 @@ hr {
 .variable-delimiter:last-child {
     right: 0;
 }
+
+.preserve-whitespace .variable-wrapper {
+    display: inline;
+    position: static;
+}
+  
+.preserve-whitespace .variable-placeholder {
+    display: inline;
+    font-size: inherit;
+}
+
+.preserve-whitespace .variable-delimiter {
+    position: static;
+    display: inline;
+}  
 
 @keyframes fadeIn {
     0% {
