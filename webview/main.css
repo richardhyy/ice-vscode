@@ -936,6 +936,46 @@ hr {
     animation-delay: 0.4s;
 }
 
+#back-to-bottom {
+    position: fixed;
+    bottom: var(--padding);
+    right: var(--padding);
+    margin-right: 4px;
+    background-color: var(--assistant-message-background-color);
+    color: var(--primary-color);
+    border: solid 1px color-mix(in srgb, var(--assistant-message-background-color) 80%, var(--shadow-color));
+    box-shadow: 0 2px 4px rgba(25, 25, 25, 0.05);
+    border-radius: 50%;
+    width: 1.5em;
+    height: 1.5em;
+    font-size: 1.5em;
+    align-items: baseline;
+    cursor: pointer;
+    transition: opacity 0.3s, transform 0.2s;
+    opacity: 0;
+    transform: translateY(-50px);
+    pointer-events: none;
+}
+
+#back-to-bottom.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+#back-to-bottom:hover {
+    filter: brightness(90%);
+}
+
+#back-to-bottom:active {
+    filter: brightness(80%);
+}
+
+#back-to-bottom svg {
+    width: 80%;
+    height: 50%;
+}
+
 .fullscreen-overlay {
     position: fixed;
     top: 0;
