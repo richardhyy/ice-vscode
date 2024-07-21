@@ -1750,23 +1750,97 @@ document.addEventListener('contextmenu', function (event) {
 
 document.addEventListener('DOMContentLoaded', () => {
   const scrollContainer = document.getElementById('conversation-scroll-container');
+  const conversationContainer = document.getElementById('conversation-container');
   const backToBottomBtn = document.getElementById('back-to-bottom');
+  const goBackBtn = document.getElementById('go-back');
 
-  // Show/hide button based on scroll position
-  scrollContainer.addEventListener('scroll', () => {
-    if (scrollContainer.scrollTop < -100) {
+  let lastScrollTop = 0;
+  let savedScrollPosition = null;
+  let savedScrollPositionResetTimeout = null;
+
+  function getVisibleElementInfo() {
+    const elements = Array.from(conversationContainer.children);
+    const containerRect = scrollContainer.getBoundingClientRect();
+
+    for (let elem of elements) {
+      const rect = elem.getBoundingClientRect();
+      
+      // Check if the element is at least partially visible
+      if (rect.top < containerRect.bottom && rect.bottom > containerRect.top) {
+        // Calculate the relative position within the element
+        const relativeOffset = scrollContainer.scrollTop - elem.offsetTop;
+        return { messageID: elem.dataset.id, relativeOffset: relativeOffset };
+      }
+    }
+    return null;
+  }
+
+  function updateButtonVisibility() {
+    const scrollActionThreshold = -window.innerHeight * 0.9;
+    // If the user has scrolled up, show the back to bottom button
+    if (scrollContainer.scrollTop < scrollActionThreshold) {
       backToBottomBtn.classList.add('visible');
     } else {
       backToBottomBtn.classList.remove('visible');
     }
-  });
 
-  // Scroll to bottom when button is clicked
+    if (savedScrollPosition) {
+      // Check if the scroll offset is greater than one screen height, and the user is scrolling up
+      if (scrollContainer.scrollTop <= scrollActionThreshold && lastScrollTop > scrollContainer.scrollTop) {
+        // Reset the saved scroll position
+        savedScrollPosition = null;
+      } else {
+        // Show the go back button
+        goBackBtn.classList.add('visible');
+      }
+    } else {
+      goBackBtn.classList.remove('visible');
+    }
+
+    lastScrollTop = scrollContainer.scrollTop;
+  }
+
+  scrollContainer.addEventListener('scroll', updateButtonVisibility);
+
   backToBottomBtn.addEventListener('click', () => {
+    savedScrollPosition = getVisibleElementInfo();
+    
+    if (savedScrollPositionResetTimeout) {
+      clearTimeout(savedScrollPositionResetTimeout);
+    }
+    savedScrollPositionResetTimeout = setTimeout(() => {
+      savedScrollPosition = null;
+      updateButtonVisibility();
+    }, 5 * 60 * 1000);  // Clear the saved scroll position after 5 minutes
+
+    console.log('Saved scroll position:', savedScrollPosition);
     scrollContainer.scrollTo({
-      top: scrollContainer.scrollHeight,
+      top: 0,
       behavior: 'smooth'
     });
+    updateButtonVisibility();
+  });
+
+  goBackBtn.addEventListener('click', () => {
+    if (savedScrollPosition) {
+      const { messageID, relativeOffset } = savedScrollPosition;
+      savedScrollPosition = null;
+      
+      const element = document.querySelector(`.message-container[data-id="${messageID}"]`);
+      if (!element) {
+        console.error('Cannot find element to scroll back to; messageID:', messageID);
+        return;
+      }
+
+      const scrollOffset = element.offsetTop + relativeOffset;
+      // Scroll to the calculated offset
+      scrollContainer.scrollTo({
+        top: scrollOffset,
+        behavior: 'smooth'
+      });
+
+      updateButtonVisibility();
+    }
   });
 });
 

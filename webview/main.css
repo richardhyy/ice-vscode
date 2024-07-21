@@ -950,8 +950,7 @@ hr {
     height: 1.5em;
     font-size: 1.5em;
     align-items: baseline;
-    cursor: pointer;
-    transition: opacity 0.3s, transform 0.2s;
+    transition: opacity 0.3s, transform 0.2s var(--default-cubic-bezier);
     opacity: 0;
     transform: translateY(-50px);
     pointer-events: none;
@@ -964,16 +963,56 @@ hr {
 }
 
 #back-to-bottom:hover {
-    filter: brightness(90%);
+    filter: brightness(95%);
 }
 
 #back-to-bottom:active {
-    filter: brightness(80%);
+    filter: brightness(85%);
 }
 
 #back-to-bottom svg {
     width: 80%;
     height: 50%;
+}
+
+#go-back {
+    position: fixed;
+    right: var(--padding);
+    top: var(--padding);
+    margin-right: 4px;
+    background-color: var(--assistant-message-background-color);
+    color: var(--primary-color);
+    border: solid 1px color-mix(in srgb, var(--assistant-message-background-color) 80%, var(--shadow-color));
+    border-radius: 20px;
+    padding: 5px 12px;
+    font-size: 0.9em;
+    transition: opacity 0.3s, transform 0.2s var(--default-cubic-bezier);
+    transform: translateX(50px);
+    opacity: 0;
+    pointer-events: none;
+    box-shadow: 0 2px 4px rgba(25, 25, 25, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+#go-back.visible {
+    opacity: 0.8;
+    transform: translateX(0);
+    pointer-events: auto;
+}
+
+#go-back:hover {
+    filter: brightness(95%);
+}
+
+#go-back:active {
+    filter: brightness(85%);
+}
+
+#go-back svg {
+    width: 1em;
+    height: 1em;
 }
 
 .fullscreen-overlay {
