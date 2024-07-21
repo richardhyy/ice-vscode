@@ -1748,6 +1748,28 @@ document.addEventListener('contextmenu', function (event) {
   });
 });
 
+document.addEventListener('DOMContentLoaded', () => {
+  const scrollContainer = document.getElementById('conversation-scroll-container');
+  const backToBottomBtn = document.getElementById('back-to-bottom');
+
+  // Show/hide button based on scroll position
+  scrollContainer.addEventListener('scroll', () => {
+    if (scrollContainer.scrollTop < -100) {
+      backToBottomBtn.classList.add('visible');
+    } else {
+      backToBottomBtn.classList.remove('visible');
+    }
+  });
+
+  // Scroll to bottom when button is clicked
+  backToBottomBtn.addEventListener('click', () => {
+    scrollContainer.scrollTo({
+      top: scrollContainer.scrollHeight,
+      behavior: 'smooth'
+    });
+  });
+});
+
 
 /**
  * Sends a message in the conversation.
