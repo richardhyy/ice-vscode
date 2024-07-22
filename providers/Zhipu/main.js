@@ -7,7 +7,7 @@
 // @variableSecure      APIKey
 // @variableRequired    Model=glm-4
 // @variableRequired    MaxTokens=2048
-// @variableRequired    SystemPrompt=You are a helpful AI assistant.
+// @variableRequired    SystemPrompt=You are a helpful assistant. Current date: {{ DATE_TODAY }}
 // @variableOptional    Temperature=0.95
 // @variableOptional    TopP=0.7
 // ==/ICEProvider==

@@ -6,7 +6,7 @@
 // @license             MIT
 // @variableSecure      APIKey
 // @variableRequired    Model=GPT-3.5-Turbo
-// @variableRequired    SystemPrompt=You are a helpful assistant.
+// @variableRequired    SystemPrompt=You are a helpful assistant. Current date: {{ DATE_TODAY }}
 // @variableOptional    Temperature=0.7
 // @variableOptional    LogitBias={}
 // ==/ICEProvider==
