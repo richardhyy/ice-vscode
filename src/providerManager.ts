@@ -45,6 +45,14 @@ Only use providers from trusted sources, and review the code before running.
 Put your custom provider scripts (.js) in this directory.
 `.trim();
 
+const environmentVariableFunctions = new Map<string, () => string>([
+  ['TIME_NOW', () => new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })],
+  ['TIME_NOW_12H', () => new Date().toLocaleTimeString([], { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' })],
+  ['DATE_TODAY', () => new Date().toISOString().split('T')[0]],
+  ['DATE_TODAY_SHORT', () => new Date().toLocaleDateString([], { month: '2-digit', day: '2-digit', year: '2-digit' })],
+  ['DATE_TODAY_LONG', () => new Date().toLocaleDateString([], { year: 'numeric', month: 'long', day: 'numeric' })],
+]);
+
 export class ProviderManager {
   private builtInProviders = [
     'OpenAI_Compatible.js',
@@ -394,6 +402,8 @@ export class ProviderManager {
         // Merge the config with the override
         let mergedConfig = { ...config.secureVariables, ...config.requiredVariables, ...config.optionalVariables, ...configOverride };
 
+        mergedConfig = this.fillSystemPromptWithEnvironmentVariables(mergedConfig);
+
         child.send({ type: 'getCompletion', requestID, messageTrail, config: mergedConfig });
 
         return requestID;
@@ -492,5 +502,23 @@ export class ProviderManager {
     } else {
       vscode.window.showErrorMessage(`Provider script not found: ${providerPath}`);
     }
+  }
+
+  private fillSystemPromptWithEnvironmentVariables(config: { [key: string]: string | null }): { [key: string]: string | null } {
+    if (config['SystemPrompt']) {
+      const systemPrompt = config['SystemPrompt']!;
+
+      const filledSystemPrompt = systemPrompt.replace(/{{\s*([^\s]+)\s*}}/g, (match: any, variableName: string) => {
+        const func = environmentVariableFunctions.get(variableName);
+        if (func) {
+          return func();
+        } else {
+          return match;
+        }
+      });
+      return { ...config, 'SystemPrompt': filledSystemPrompt };
+    }
+    
+    return config;
   }
 }

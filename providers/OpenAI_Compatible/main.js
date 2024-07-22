@@ -11,7 +11,7 @@
 // @variableRequired    APIPath=/v1/chat/completions
 // @variableRequired    Model=gpt-3.5-turbo
 // @variableRequired    MaxTokensToSample=4000
-// @variableRequired    SystemPrompt=You are a helpful assistant.
+// @variableRequired    SystemPrompt=You are a helpful assistant. Current date: {{ DATE_TODAY }}
 // @variableOptional    Temperature=0.7
 // @variableOptional    LogitBias={}
 // @variableOptional    AdditionalHeaders={}

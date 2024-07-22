@@ -11,7 +11,7 @@
 // @variableRequired    APIPath=/v1/messages
 // @variableRequired    Model=claude-3-opus-20240229
 // @variableRequired    MaxTokensToSample=4000
-// @variableRequired    SystemPrompt=You are a helpful assistant.
+// @variableRequired    SystemPrompt=You are a helpful assistant. Current date: {{ DATE_TODAY }}
 // @variableOptional    Temperature=0.5
 // @variableOptional    LogitBias={}
 // ==/ICEProvider==
