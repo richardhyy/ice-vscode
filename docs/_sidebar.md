@@ -9,6 +9,7 @@
   - [Forking and Editing](forking-and-editing.md)
   - [Inline Configuration](inline-configuration.md)
   - [Message Snippets](message-snippets.md)
+  - [Variables and Placeholders](variables.md)
   - [Instant Chat](instant-chat.md)
 - Advanced Topics
   - [Custom Providers](custom-providers.md)

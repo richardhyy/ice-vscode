@@ -1,5 +1,27 @@
 # Change Log
 
+## [0.6.0] - 2024-07-22
+
+### Added
+- New navigation buttons in chat view:
+  - "Go back" button to restore previous scroll position
+  - "Back to bottom" button for quick navigation to the latest message
+- Message variable support for placeholders in prompts
+- Environment variable support for system prompts
+- Ruler with position markers for improved conversation navigation
+
+### Changed
+- Updated command names for message operations to improve clarity:
+  - "Duplicate" -> "Fork"
+  - "Toggle Edit" -> "Edit"
+- Refined config node insertion process to re-link messages instead of creating new branches
+
+### Improved
+- Configuration editor selection color for better visibility
+
+### Known Issues
+- Ctrl+C/V (or Command+C/V) for copy/paste may not work after using the context menu in ICE. This is a known *VSCode issue* that will be fixed in a future update. Workaround: Click outside the chat view and then back inside to restore copy/paste functionality.
+
 ## [0.5.1] - 2024-07-14
 ### Changed
 - Improved handling of empty messages

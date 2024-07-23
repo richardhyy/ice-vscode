@@ -17,5 +17,8 @@ Modify chat provider settings and switch between providers within a single conve
 ## [Message Snippets](message-snippets.md)
 Save time and maintain consistency in your LLM interactions with message snippets. Quickly insert frequently used prompts or text patterns.
 
+## [Variables and Placeholders](variables.md)
+Enhance your conversations with dynamic content using variables and placeholders. ICE supports custom variables in user messages and system prompts, enabling more context-aware interactions with LLMs.
+
 ## [Instant Chat](instant-chat.md)
 Start conversations with LLMs quickly without creating a new `.chat` file. Instant Chat provides rapid access to LLM capabilities for quick queries and seamless continuation of previous conversations.
