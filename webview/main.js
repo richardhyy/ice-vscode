@@ -1,5 +1,6 @@
 const icons = require('./icons.js');
 const marked = require('marked');
+import { Ruler } from './widgets/ruler.js';
 import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
 import { minimalSetup } from "codemirror";
@@ -8,16 +9,14 @@ import { autocompletion } from "@codemirror/autocomplete";
 const vscode = acquireVsCodeApi();
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
 
-const messageInput = document.getElementById("message-input");
-const sendButton = document.getElementById("send-button");
-const conversationContainer = document.getElementById(
-  "conversation-container"
-);
+const rulerElement = document.getElementById('ruler');
+const conversationContainer = document.getElementById("conversation-container");
 const PARSER_PARAMETERS = {
   ...marked.getDefaults(),
   "breaks": true
 };
 
+const ruler = new Ruler(conversationContainer, rulerElement);
 let flatMessages = {};
 let messageIDWithChildren = {}; // {messageID: [childID1, childID2, ...]}
 let activePath = [];
@@ -1140,6 +1139,9 @@ function createMessageContainer(message, editing = false, shouldAnimate = false)
             .querySelector(".shadow-message-container")
             .remove();
         }
+
+        // Update marks
+        _updateRulerMarks();
       };
     }
   }
@@ -1186,6 +1188,28 @@ function _renderInputShadowMessage(parentMessageID) {
 
 
 /**
+ * Updates the ruler marks for configs and branches in the conversation.
+ */
+function _updateRulerMarks() {
+  ruler.clear();
+
+  if (conversationContainer.scrollHeight <= window.innerHeight) {
+    // If the conversation fits in the viewport, no need to show the ruler
+    return;
+  }
+
+  const forkNodes = document.querySelectorAll(".sibling-switcher");
+  forkNodes.forEach(node => {
+    ruler.addMark(node);
+  });
+
+  const configNodes = document.querySelectorAll(".config-content");
+  configNodes.forEach(node => {
+    ruler.addMark(node, "config");
+  });
+}
+
+/**
  * Renders the entire conversation.
  * @param {boolean} shouldAnimateLastMessage - Whether to animate the last message when rendering.
  */
@@ -1213,6 +1237,9 @@ function renderConversation(shouldAnimateLastMessage = false) {
     // If there is no active path, render an empty user message
     _renderInputShadowMessage(null);
   }
+
+  // Update branch marks
+  _updateRulerMarks();
 }
 
 

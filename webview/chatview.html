@@ -5,7 +5,7 @@
     <title>Chat View</title>
     <link rel="stylesheet" href="./main.css" />
   </head>
-  <body>
+  <body>        
     <div id="conversation-scroll-container">
       <div id="conversation-container">
         <!-- Conversation structure will be dynamically generated here -->
@@ -25,12 +25,10 @@
       </div>
     </div>
 
-    <div id="errorOverlay" class="fullscreen-overlay">
-      <div id="errorIcon" class="error-icon"></div>
-      <p id="errorMessage" class="error-message"></p>
-
-      <button id="showDetailsButton" class="show-error-details-button" title="Show Error Details">Details...</button>
-      <div id="errorDetails" class="error-details"></div>
+    <div id="ruler-container">
+      <div id="ruler">
+        <!-- Marks will be dynamically added here -->
+      </div>
     </div>
 
     <button id="back-to-bottom" class="hidden">
@@ -45,6 +43,14 @@
       </svg>
       Back
     </button>
+
+    <div id="errorOverlay" class="fullscreen-overlay">
+      <div id="errorIcon" class="error-icon"></div>
+      <p id="errorMessage" class="error-message"></p>
+
+      <button id="showDetailsButton" class="show-error-details-button" title="Show Error Details">Details...</button>
+      <div id="errorDetails" class="error-details"></div>
+    </div>
 
     <script src="./main.js"></script>
   </body>
