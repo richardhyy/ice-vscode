@@ -9,6 +9,7 @@
   - [フォークと編集](/ja/forking-and-editing.md)
   - [インライン設定](/ja/inline-configuration.md)
   - [メッセージスニペット](/ja/message-snippets.md)
+  - [変数とプレースホルダー](/ja/variables.md)
   - [インスタントチャット](/ja/instant-chat.md)
 - 高度なトピック
   - [カスタムプロバイダー](/ja/custom-providers.md)

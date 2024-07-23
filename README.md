@@ -112,6 +112,53 @@ Right-click on a message editor and select "Manage Snippets" to view, edit, and 
 
 ![Message Snippet](docs/images/snippet.png)
 
+### Placeholders and Variables
+
+ICE supports the use of placeholders and variables in both user messages/prompts and system prompts.
+
+#### User Messages and Prompts
+
+You can use variables in your user messages and prompts for more flexible interactions. Here's how:
+
+1. Declare variables in a configuration node:
+   - Right-click a message and select "Insert Config Update"
+   - In the configuration, declare variables using the format: `$name = Variable value...`
+
+2. Use variables in your messages:
+   - In user messages, insert variable placeholders by typing `{{ name }}`
+   - Autocompletion is available for quick insertion
+
+Example:
+```
+$Doc = My name is Richard.
+$TargetLanguage = Japanese.
+```
+
+User message:
+```
+Translate "{{ Doc }}" to {{ TargetLanguage }}.
+```
+
+![Variables](docs/images/variables.png)
+
+#### System Prompts
+
+For system prompts, ICE supports various **environment variables** that can be used to include dynamic information. These are particularly useful for providing context-aware information to LLMs.
+
+| Variable | Description | Example Output |
+|----------|-------------|----------------|
+| {{ TIME_NOW }} | Current time in 24-hour format | 14:30:45 |
+| {{ TIME_NOW_12H }} | Current time in 12-hour format | 09:41:23 PM |
+| {{ DATE_TODAY }} | Today's date in ISO format | 2024-07-22 |
+| {{ DATE_TODAY_SHORT }} | Today's date in short format | 07/22/24 |
+| {{ DATE_TODAY_LONG }} | Today's date in long format | July 22, 2024 |
+
+Example usage in a system prompt:
+"`You are an AI assistant. The current date is {{ DATE_TODAY_LONG }} and the time is {{ TIME_NOW_12H }}.`"
+
+These variables are automatically replaced with their corresponding values when the system prompt is sent to the LLM.
+
+
 ## Requirements
 
 To use ICE with the built-in LLM providers, you'll need to provide your own API keys. When you send your first message, ICE will prompt you to enter the necessary configuration details.
@@ -146,6 +193,20 @@ As ICE is in early development, you may encounter bugs or instability. If you ex
 - [x] UI improvements
 
 ## Release Notes
+
+### 0.6.0
+
+- Added new navigation buttons in chat view:
+  - "Go back" button to restore previous scroll position
+  - "Back to bottom" button for quick navigation to the latest message
+- Introduced message variable support for placeholders in prompts
+- Added environment variable support for system prompts
+- Added ruler with position markers for improved conversation navigation
+- Updated command names for message operations to improve clarity:
+  - "Duplicate" renamed to "Fork"
+  - "Toggle Edit" renamed to "Edit"
+- Refined config node insertion process to re-link messages instead of creating new branches
+- Improved configuration editor selection color for better visibility
 
 ### 0.5.1
 - Enabled find widget in chat view
