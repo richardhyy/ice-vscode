@@ -271,6 +271,8 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
   }
 
   public async resolveCustomEditor(document: vscode.CustomDocument, webviewPanel: vscode.WebviewPanel, token: vscode.CancellationToken): Promise<void> {
+    showICECopyPasteIssueNotification(this.context);
+    
     await this.providerManager.loadProviders();
 
     if (!this.currentProvider) {
@@ -677,4 +679,26 @@ function updateProviderStatusBar(label: string | undefined, error?: string) {
 
   statusBarItem.backgroundColor = error ? new vscode.ThemeColor('errorForeground') : undefined;
   statusBarItem.tooltip = error || label || 'No provider selected';
+}
+
+function showICECopyPasteIssueNotification(context: vscode.ExtensionContext) {
+  const version = vscode.version;
+  const [major, minor] = version.split('.').map(Number);
+  const isVSCodeVersionAffected = major === 1 && minor <= 91;
+
+  const NOTIFICATION_INTERVAL = 4 * 24 * 60 * 60 * 1000; // 4 days
+  const CONFIG_KEY = 'ice.lastCopyPasteNotificationTime';
+
+  const lastNotificationTime = context.globalState.get(CONFIG_KEY, 0);
+  const currentTime = Date.now();
+  const shouldShowNotification = currentTime - lastNotificationTime >= NOTIFICATION_INTERVAL;
+
+  if (isVSCodeVersionAffected && shouldShowNotification) {
+    const message = 'Ctrl+C/V (or Command+C/V) for copy/paste may not work after using the context menu in ICE. This is a known VSCode issue that will be fixed in a future update. To resolve, click outside the chat view and then back inside.';
+    
+    vscode.window.showInformationMessage(message, 'Got it')
+      .then(() => {
+        context.globalState.update(CONFIG_KEY, Date.now());
+      });
+  }
 }
