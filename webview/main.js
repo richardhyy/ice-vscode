@@ -696,7 +696,53 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
       updateAttachments(message.id, message.attachments || [], false, attachmentContainer);
     }
   } else { // Not editing
-    let renderedContent = _renderMarkdown(message.content + (message.content.length === 0 ? (message.incomplete ? "..." : "(empty)") : ""));
+    // Render reasoning/thinking output (if any) as a collapsible block above the answer.
+    let hasReasoningBlock = false;
+    if (!clipContent) {
+      const reasoning = message.customFields && message.customFields.reasoning;
+      if (typeof reasoning === "string" && reasoning.trim().length > 0) {
+        hasReasoningBlock = true;
+        // "Thinking" while reasoning is still streaming and no answer has arrived yet.
+        const isThinking = message.incomplete && message.content.length === 0;
+
+        const reasoningBlock = document.createElement("details");
+        reasoningBlock.classList.add("reasoning-block");
+        // Keep it expanded while streaming, collapsed once the message is complete.
+        reasoningBlock.open = Boolean(message.incomplete);
+
+        const reasoningSummary = document.createElement("summary");
+        reasoningSummary.classList.add("reasoning-summary");
+        if (isThinking) {
+          reasoningSummary.classList.add("thinking");
+        }
+
+        const reasoningChevron = document.createElement("span");
+        reasoningChevron.classList.add("reasoning-chevron");
+        reasoningChevron.innerHTML = icons.ICON_CARET_RIGHT;
+        reasoningSummary.appendChild(reasoningChevron);
+
+        const reasoningLabel = document.createElement("span");
+        reasoningLabel.classList.add("reasoning-label");
+        reasoningLabel.textContent = isThinking ? "Thinking\u2026" : "Reasoning";
+        reasoningSummary.appendChild(reasoningLabel);
+
+        reasoningBlock.appendChild(reasoningSummary);
+
+        const reasoningContent = document.createElement("div");
+        reasoningContent.classList.add("reasoning-content", "markdown-content");
+        reasoningContent.innerHTML = _renderMarkdown(reasoning);
+        reasoningBlock.appendChild(reasoningContent);
+
+        messageContent.appendChild(reasoningBlock);
+      }
+    }
+
+    // Avoid a redundant "..." placeholder while only the reasoning is still streaming.
+    let answerText = message.content;
+    if (message.content.length === 0) {
+      answerText = message.incomplete ? (hasReasoningBlock ? "" : "...") : "(empty)";
+    }
+    let renderedContent = _renderMarkdown(answerText);
     const markdownContent = document.createElement("div");
     markdownContent.classList.add("markdown-content");
     if (message.content.length === 0) {

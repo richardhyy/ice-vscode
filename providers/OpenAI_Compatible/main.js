@@ -1,6 +1,6 @@
 // ==ICEProvider==
 // @name                OpenAI Compatible
-// @version             1.1
+// @version             1.2
 // @description         ICE provider for OpenAI compatible API. This script is not affiliated with OpenAI.
 // @author              Alan Richard
 // @license             MIT
@@ -15,9 +15,11 @@
 // @variableOptional    Temperature=0.7
 // @variableOptional    LogitBias={}
 // @variableOptional    AdditionalHeaders={}
+// @variableOptional    ReasoningEffort
 // ==/ICEProvider==
 
 const https = require('https');
+const http = require('http');
 const fs = require('fs');
 const isBinaryFileSync = require("isbinaryfile").isBinaryFileSync;
 
@@ -26,6 +28,16 @@ function debug(message) {
     type: 'debug',
     content: message
   });
+}
+
+/**
+ * Resolves the request endpoint from the configured host and path.
+ * `APIHost` may be a bare hostname (defaults to https on port 443) or a full
+ * base URL such as `http://localhost:8080`, enabling local/proxy endpoints.
+ */
+function resolveEndpoint(apiHost, apiPath) {
+  const base = apiHost.includes('://') ? apiHost : `https://${apiHost}`;
+  return new URL(apiPath, base);
 }
 
 let requests = {};
@@ -110,24 +122,32 @@ process.on('message', (message) => {
       content: config.SystemPrompt,
     });
 
-    const requestBody = JSON.stringify({
+    const requestPayload = {
       model: config.Model,
       messages: messages,
       max_tokens: parseInt(config.MaxTokensToSample),
       stream: true,
       temperature: parseFloat(config.Temperature || '0.7'),
       logit_bias: JSON.parse(config.LogitBias || '{}'),
-    });
+    };
+
+    // Optionally request reasoning/thinking output (only sent when configured,
+    // since some models reject an explicit reasoning effort).
+    if (config.ReasoningEffort) {
+      requestPayload.reasoning_effort = config.ReasoningEffort;
+    }
+
+    const requestBody = JSON.stringify(requestPayload);
 
     debug(`Request body: ${requestBody}\n`);
 
-    const hostname = config.APIHost;
-    const path = config.APIPath;
+    const endpoint = resolveEndpoint(config.APIHost, config.APIPath);
+    const transport = endpoint.protocol === 'http:' ? http : https;
 
     const options = {
-      hostname: hostname,
-      port: 443,
-      path: path,
+      hostname: endpoint.hostname,
+      port: endpoint.port || (endpoint.protocol === 'http:' ? 80 : 443),
+      path: endpoint.pathname + endpoint.search,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -155,13 +175,24 @@ process.on('message', (message) => {
             error: 'No response'
           });
         } else {
-          const delta = data.choices[0].delta;
-          process.send({
-            type: 'stream',
-            requestID: requestID,
-            partialText: delta.content || ''
-          });
-          return delta.content || '';
+          const delta = data.choices[0].delta || {};
+          // Reasoning/thinking is delivered under different keys depending on the
+          // backend: reasoning_text (Copilot proxy), reasoning_content (DeepSeek),
+          // or reasoning (OpenRouter). The answer itself comes via `content`.
+          const reasoningChunk = (typeof delta.reasoning_text === 'string' && delta.reasoning_text)
+            || (typeof delta.reasoning_content === 'string' && delta.reasoning_content)
+            || (typeof delta.reasoning === 'string' && delta.reasoning)
+            || '';
+          const contentChunk = delta.content || '';
+          if (reasoningChunk || contentChunk) {
+            process.send({
+              type: 'stream',
+              requestID: requestID,
+              partialText: contentChunk,
+              reasoningText: reasoningChunk,
+            });
+          }
+          return contentChunk;
         }
       } else {
         debug(`Unsupported object: ${data.object}\n`);
@@ -177,7 +208,7 @@ process.on('message', (message) => {
 
     let responseText = '';
 
-    const req = https.request(options, (res) => {
+    const req = transport.request(options, (res) => {
       debug(`Response status code: ${res.statusCode}\n`);
       debug(`Response headers: ${JSON.stringify(res.headers)}\n`);
 

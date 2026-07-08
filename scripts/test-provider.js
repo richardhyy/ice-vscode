@@ -1,0 +1,210 @@
+#!/usr/bin/env node
+/**
+ * Standalone provider test harness.
+ *
+ * Forks an ICE provider script the same way `src/providerManager.ts` does
+ * (IPC child process + `getCompletion` message) and exercises it against a real
+ * endpoint, printing the streamed reasoning and answer separately.
+ *
+ * This lets you iterate on providers systematically from the terminal without
+ * launching the full VS Code extension host.
+ *
+ * Usage:
+ *   node scripts/test-provider.js [options]
+ *
+ * Options:
+ *   --provider <name>     Provider folder under providers/ (default: OpenAI_Compatible)
+ *   --model <id>          Model id (default: $ICE_TEST_MODEL or gpt-5.5)
+ *   --host <baseUrl>      API base URL (default: $ICE_TEST_HOST or https://api.openai.com)
+ *   --path <path>         API path (default: $ICE_TEST_PATH or /v1/chat/completions)
+ *   --prompt <text>       User prompt (default: a small reasoning question)
+ *   --system <text>       System prompt (default: a generic assistant prompt)
+ *   --api-key <key>       API key / bearer token (default: $ICE_TEST_API_KEY or empty)
+ *   --reasoning <effort>  Optional reasoning effort (e.g. low|medium|high). Sent only if set.
+ *   --max-tokens <n>      Max tokens to sample (default: 1024)
+ *   --timeout <ms>        Overall timeout (default: 60000)
+ *   --verbose             Print raw debug messages from the provider
+ *
+ * Endpoint, model and key can be supplied via CLI flags or the ICE_TEST_*
+ * environment variables so no specific setup needs to be hardcoded here.
+ *
+ * Exit codes: 0 = completed, 1 = provider error, 2 = timeout, 3 = usage/spawn error.
+ */
+
+'use strict';
+
+const path = require('path');
+const fs = require('fs');
+const child_process = require('child_process');
+
+function parseArgs(argv) {
+  const args = {};
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (!token.startsWith('--')) {
+      continue;
+    }
+    const key = token.slice(2);
+    if (key === 'verbose') {
+      args.verbose = true;
+      continue;
+    }
+    const value = argv[i + 1];
+    if (value === undefined || value.startsWith('--')) {
+      console.error(`Missing value for --${key}`);
+      process.exit(3);
+    }
+    args[key] = value;
+    i++;
+  }
+  return args;
+}
+
+const args = parseArgs(process.argv.slice(2));
+
+const providerName = args.provider || 'OpenAI_Compatible';
+const model = args.model || process.env.ICE_TEST_MODEL || 'gpt-5.5';
+const host = args.host || process.env.ICE_TEST_HOST || 'https://api.openai.com';
+const apiPath = args.path || process.env.ICE_TEST_PATH || '/v1/chat/completions';
+const prompt = args.prompt || 'What is 23 * 47? Reason it out briefly, then give the final answer.';
+const systemPrompt = args.system || 'You are a helpful assistant.';
+const apiKey = args['api-key'] || process.env.ICE_TEST_API_KEY || '';
+const reasoningEffort = args.reasoning || '';
+const maxTokens = args['max-tokens'] || '1024';
+const timeoutMs = parseInt(args.timeout || '60000', 10);
+const verbose = Boolean(args.verbose);
+
+const providerPath = path.resolve(__dirname, '..', 'providers', providerName, 'main.js');
+if (!fs.existsSync(providerPath)) {
+  console.error(`Provider script not found: ${providerPath}`);
+  process.exit(3);
+}
+
+// Config mirrors the merged config that ProviderManager passes to a provider.
+const config = {
+  APIKey: apiKey,
+  APIHost: host,
+  APIPath: apiPath,
+  Model: model,
+  MaxTokensToSample: maxTokens,
+  SystemPrompt: systemPrompt,
+  Temperature: '0.7',
+  LogitBias: '{}',
+  AdditionalHeaders: '{}',
+};
+if (reasoningEffort) {
+  config.ReasoningEffort = reasoningEffort;
+}
+
+const requestID = 'harness-' + Date.now();
+const messageTrail = [
+  { id: 1, role: 'user', content: prompt, parentID: null, timestamp: new Date().toISOString() },
+];
+
+console.log('─'.repeat(72));
+console.log(`Provider : ${providerName}  (${providerPath})`);
+console.log(`Endpoint : ${host}${apiPath}`);
+console.log(`Model    : ${model}${reasoningEffort ? `  (reasoning: ${reasoningEffort})` : ''}`);
+console.log(`Prompt   : ${prompt}`);
+console.log('─'.repeat(72));
+
+const child = child_process.fork(providerPath, [], {
+  stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+  env: {
+    ...process.env,
+    ICE_PROVIDER_ID: `${providerName}@harness`,
+    ICE_PROVIDER_CONFIG: JSON.stringify(config),
+  },
+});
+
+let reasoningText = '';
+let contentText = '';
+let reasoningHeaderShown = false;
+let answerHeaderShown = false;
+let finished = false;
+
+const timer = setTimeout(() => {
+  console.error(`\n\n[timeout] No completion after ${timeoutMs}ms`);
+  cleanup(2);
+}, timeoutMs);
+
+function cleanup(code) {
+  if (finished) {
+    return;
+  }
+  finished = true;
+  clearTimeout(timer);
+  try {
+    child.kill();
+  } catch (_) {
+    /* ignore */
+  }
+  process.exit(code);
+}
+
+child.stderr.on('data', (data) => {
+  process.stderr.write(`[provider stderr] ${data}`);
+});
+
+child.on('message', (message) => {
+  switch (message.type) {
+    case 'stream': {
+      if (message.reasoningText) {
+        if (!reasoningHeaderShown) {
+          process.stdout.write('\nREASONING\n');
+          reasoningHeaderShown = true;
+        }
+        reasoningText += message.reasoningText;
+        process.stdout.write(message.reasoningText);
+      }
+      if (message.partialText) {
+        if (!answerHeaderShown) {
+          process.stdout.write(`${reasoningHeaderShown ? '\n' : ''}\n💬 ANSWER\n`);
+          answerHeaderShown = true;
+        }
+        contentText += message.partialText;
+        process.stdout.write(message.partialText);
+      }
+      break;
+    }
+    case 'done':
+      console.log(`\nDone. reasoning: ${reasoningText.length} chars, answer: ${contentText.length} chars`);
+      if (reasoningText.length === 0) {
+        console.log('   (no reasoning stream received — model/endpoint may not emit reasoning)');
+      }
+      cleanup(0);
+      break;
+    case 'error':
+      console.error(`\nProvider error: ${message.error}`);
+      cleanup(1);
+      break;
+    case 'warning':
+      console.warn(`\nProvider warning: ${message.content}`);
+      break;
+    case 'debug':
+      if (verbose) {
+        process.stderr.write(`[debug] ${message.content}`);
+      }
+      break;
+    default:
+      if (verbose) {
+        console.error(`[unknown message] ${JSON.stringify(message)}`);
+      }
+  }
+});
+
+child.on('error', (err) => {
+  console.error(`\nFailed to run provider: ${err.message}`);
+  cleanup(3);
+});
+
+child.on('exit', (code, signal) => {
+  if (!finished) {
+    console.error(`\nProvider exited early (code=${code}, signal=${signal})`);
+    cleanup(1);
+  }
+});
+
+// Kick off the request, mirroring ProviderManager's initialize + getCompletion.
+child.send({ type: 'initialize', id: `${providerName}@harness` });
+child.send({ type: 'getCompletion', requestID, messageTrail, config });

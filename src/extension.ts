@@ -369,8 +369,12 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
               const requestID = await provider.getCompletion(
                 processedMessageTrail,
                 configOverride,
-                (partialText: string) => {
+                (partialText: string, reasoningText?: string) => {
                   // Streaming message from provider
+                  if (reasoningText) {
+                    newMessage.customFields = newMessage.customFields || {};
+                    newMessage.customFields.reasoning = (newMessage.customFields.reasoning || '') + reasoningText;
+                  }
                   newMessage.content += partialText;
                   webviewPanel.webview.postMessage({ type: 'updateMessage', message: newMessage, incomplete: true });
                   webviewPanel.webview.postMessage({ type: 'progress', text: 'Text Completion in Progress', cancelableRequestID: requestID });

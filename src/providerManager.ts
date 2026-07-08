@@ -22,7 +22,7 @@ export interface Provider {
     optionalVariables: string[],
   };
   getCompletion: (messageTrail: ChatMessage[], configOverride: { [key: string]: string }, 
-                  onStream: (partialText: string) => void, onCompletion: (finalText: string) => void) 
+                  onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string) => void) 
                   => Promise<string>;
   requestCancel: (requestID: string) => void;
 }
@@ -69,7 +69,7 @@ export class ProviderManager {
       child: child_process.ChildProcess | undefined,
     }
   } = {};
-  private pendingRequests: Map<string, { onStream: (partialText: string) => void, onCompletion: (finalText: string) => void }> = new Map();
+  private pendingRequests: Map<string, { onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string) => void }> = new Map();
 
   constructor(private context: vscode.ExtensionContext) {
     // Create custom provider directory if it doesn't exist
@@ -313,10 +313,10 @@ export class ProviderManager {
     // Set up communication with the child process.
     child.on('message', (message: any) => {
       if (message.type === 'stream') {
-        const { requestID, partialText } = message;
+        const { requestID, partialText, reasoningText } = message;
         const request = this.pendingRequests.get(requestID);
         if (request) {
-          request.onStream(partialText);
+          request.onStream(partialText, reasoningText);
         }
       } else if (message.type === 'done') {
         const { requestID, finalText } = message;
@@ -374,7 +374,7 @@ export class ProviderManager {
         optionalVariables: Object.keys(config.optionalVariables),
       },
       getCompletion: async (messageTrail: ChatMessage[], configOverride: { [key: string]: string },
-                            onStream: (partialText: string) => void, onCompletion: (finalText: string) => void) => {        
+                            onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string) => void) => {        
         if (!this.providers[providerID].child) {
           // Provider is not initialized yet; resolve its script path and start it.
           await this.initializeProvider(providerID, this.getProviderPath(providerID));
