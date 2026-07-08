@@ -4,6 +4,7 @@ import * as path from 'path';
 import * as child_process from 'child_process';
 import * as crypto from 'crypto';
 import { ChatMessage } from './chatHistoryManager';
+import { BUILT_IN_SUFFIX } from './constants';
 
 export interface ProviderConfig {
   info: { [key: string]: string };
@@ -141,12 +142,12 @@ export class ProviderManager {
   }
 
   private getProviderID(providerPath: string, code: string, isBuiltIn: boolean): string {
-    return path.basename(providerPath, '.js') + '@' + (isBuiltIn ? 'built-in' : calculateProviderHash(code, 8));
+    return path.basename(providerPath, '.js') + (isBuiltIn ? BUILT_IN_SUFFIX : '@' + calculateProviderHash(code, 8));
   }
 
   private getProviderPath(providerID: string): string {
-    if (providerID.endsWith('@built-in')) {
-      return path.join(__dirname, 'providers', providerID.slice(0, -'@built-in'.length) + '.js');
+    if (providerID.endsWith(BUILT_IN_SUFFIX)) {
+      return path.join(__dirname, 'providers', providerID.slice(0, -BUILT_IN_SUFFIX.length) + '.js');
     } else {
       return path.join(this.context.globalStorageUri.fsPath, 'providers', providerID.split('@')[0] + '.js');
     }
@@ -375,15 +376,8 @@ export class ProviderManager {
       getCompletion: async (messageTrail: ChatMessage[], configOverride: { [key: string]: string },
                             onStream: (partialText: string) => void, onCompletion: (finalText: string) => void) => {        
         if (!this.providers[providerID].child) {
-          // Provider is not initialized. Assume providerID is the path to the script.
-          let providerPath: string;
-          if (providerID.endsWith('@built-in')) {
-            // Built-in provider
-            providerPath = path.join(__dirname, 'providers', providerID.slice(0, -'@built-in'.length) + '.js');
-          } else {
-            providerPath = path.join(this.context.globalStorageUri.fsPath, 'providers', providerID.split('@')[0] + '.js');
-          }
-          await this.initializeProvider(providerID, providerPath);
+          // Provider is not initialized yet; resolve its script path and start it.
+          await this.initializeProvider(providerID, this.getProviderPath(providerID));
         }
 
         const { child } = this.providers[providerID];
@@ -419,7 +413,7 @@ export class ProviderManager {
 
   public async getProviderIDs(): Promise<string[]> {
     // List all provider IDs, including built-in providers and those from the providers directory.
-    let providerIDs = this.builtInProviders.map(provider => path.basename(provider, '.js') + '@built-in');
+    let providerIDs = this.builtInProviders.map(provider => path.basename(provider, '.js') + BUILT_IN_SUFFIX);
 
     const providersDir = path.join(this.context.globalStorageUri.fsPath, 'providers');
     if (fs.existsSync(providersDir)) {

@@ -1,14 +1,14 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as yaml from 'js-yaml';
 import * as mime from 'mime-types';
-const isBinaryFileSync = require("isbinaryfile").isBinaryFileSync;
 import html from '../webview/chatview.html';
 import { Provider, ProviderManager } from './providerManager';
 import { Attachment, ChatAction, ChatHistoryManager, ChatMessage } from './chatHistoryManager';
 import { InstantChatManager } from './instantChatManager';
 import { SnippetManager } from './snippetManager';
+import { ROLE_ASSISTANT, STATE_KEY_PREVIOUS_PROVIDER_ID } from './constants';
+import { preprocessAttachments, resolveMessageTrailVariables } from './messageProcessing';
 
 let extensionContext: vscode.ExtensionContext;
 let chatViewProvider: ChatViewProvider;
@@ -85,45 +85,34 @@ export function activate(context: vscode.ExtensionContext) {
   statusBarItem.tooltip = 'Configure ICE Chat Providers';
   context.subscriptions.push(statusBarItem);
 
-  // Register message handlers
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.fork', async () => {
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'fork' });
-  }));
+  // Register simple context-menu commands that just forward an operation to the
+  // active webview. Kept as a table to avoid repetitive registration boilerplate.
+  const contextMenuCommands: { command: string; operation: string; subOperation?: string }[] = [
+    { command: 'chat-view.message.fork', operation: 'fork' },
+    { command: 'chat-view.message.toggleEdit', operation: 'toggleEdit' },
+    { command: 'chat-view.message.regenerate', operation: 'regenerate' },
+    { command: 'chat-view.message.resend', operation: 'resend' },
+    { command: 'chat-view.message.insertConfigUpdate.before', operation: 'insertConfigUpdate', subOperation: 'before' },
+    { command: 'chat-view.message.insertConfigUpdate.after', operation: 'insertConfigUpdate', subOperation: 'after' },
+    { command: 'chat-view.message.copy', operation: 'copy' },
+    { command: 'chat-view.message.attachment.reveal', operation: 'revealAttachment' },
+    { command: 'chat-view.message.attachment.remove', operation: 'removeAttachment' },
+    { command: 'chat-view.message.editor.createSnippet', operation: 'createSnippet' },
+  ];
+  for (const { command, operation, subOperation } of contextMenuCommands) {
+    context.subscriptions.push(vscode.commands.registerCommand(command, async () => {
+      postMessageToCurrentWebview({ type: 'contextMenuOperation', operation, subOperation });
+    }));
+  }
+
+  // Deleting a message requires an explicit confirmation before forwarding the operation.
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.delete', async () => {
-    vscode.window.showQuickPick(['Yes', 'No'], { placeHolder: 'Are you sure you want to delete this message?' }).then((value) => {
-      if (value === 'Yes') {
-        postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'delete' });
-      }
-    });
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'delete' });
+    const choice = await vscode.window.showQuickPick(['Yes', 'No'], { placeHolder: 'Are you sure you want to delete this message?' });
+    if (choice === 'Yes') {
+      postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'delete' });
+    }
   }));
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.toggleEdit', async () => {
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'toggleEdit' });
-  }));
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.regenerate', async () => {
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'regenerate' });
-  }));
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.resend', async () => {
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'resend' });
-  }));
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.insertConfigUpdate.before', async () => {
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'insertConfigUpdate', subOperation: 'before' });
-  }));
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.insertConfigUpdate.after', async () => {
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'insertConfigUpdate', subOperation: 'after' });
-  }));
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.copy', async () => {
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'copy' });
-  }));
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.attachment.reveal', async () => {
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'revealAttachment' });
-  }));
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.attachment.remove', async () => {
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'removeAttachment' });
-  }));
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.editor.createSnippet', async () => {
-    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'createSnippet' });
-  }));
+
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.editor.manageSnippets', async () => {
     await snippetManager.showSnippetPicker();
 
@@ -168,8 +157,6 @@ class QuickPickerSeparator implements vscode.QuickPickItem {
   }
 }
 
-const STATEKEY_PREVIOUS_PROVIDER_ID = 'chatView.previousProviderID';
-
 class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
   private readonly providerManager: ProviderManager;
   private currentProvider: Provider | null = null;
@@ -184,7 +171,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
     const label = this.currentProvider.info['name'] || this.currentProvider.id;
     updateProviderStatusBar(label);
     postMessageToCurrentWebview({ type: 'selectProvider', providerID: this.currentProvider.id });
-    this.context.globalState.update(STATEKEY_PREVIOUS_PROVIDER_ID, this.currentProvider.id);
+    this.context.globalState.update(STATE_KEY_PREVIOUS_PROVIDER_ID, this.currentProvider.id);
   }
 
   async showProviderPicker(showPreviousProvider: boolean) {
@@ -263,7 +250,6 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
   private async loadChatHistory(webviewPanel: vscode.WebviewPanel, chatHistoryManager: ChatHistoryManager): Promise<void> {
     const actions: ChatAction[] = await chatHistoryManager.loadActionHistory();
     webviewPanel.webview.postMessage({ type: 'loadActions', actions: actions });
-    console.log('actions', actions);
   }
 
   public async openCustomDocument(uri: vscode.Uri, openContext: vscode.CustomDocumentOpenContext, token: vscode.CancellationToken): Promise<vscode.CustomDocument> {
@@ -277,7 +263,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
 
     if (!this.currentProvider) {
       // Load the previous provider if current provider is not set
-      const previousProviderID = this.context.globalState.get<string>(STATEKEY_PREVIOUS_PROVIDER_ID);
+      const previousProviderID = this.context.globalState.get<string>(STATE_KEY_PREVIOUS_PROVIDER_ID);
       if (previousProviderID) {
         this.providerManager.getProviderByID(previousProviderID).then((provider) => {
           if (provider) {
@@ -356,92 +342,17 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
 
           updateProviderStatusBar(provider?.info['name'] || provider?.id);
 
-          let messageTrail: ChatMessage[] = [];
-          let variableValueMap = new Map<string, string>();
-          for (const m of message.messageTrail) {
-            if (m.role === '#config') {
-              // Extract the variables from the config message
-              const config: any = yaml.load(m.content);
-              if (config) {
-                for (const key of Object.keys(config)) {
-                  if (!key.startsWith('$')) {
-                    continue;
-                  }
-
-                  const value = config[key];
-                  variableValueMap.set(key.substring(1), value);
-                }
-
-                console.log(`Message ID ${m.id}: Variables extracted from config`, variableValueMap);
-              }
-            } else if (!m.role.startsWith('#')) {
-              // Fill variables in the message content
-              // Variable is formatted as {{ variableName }} or {{variableName}} in the message content
-              let newMessage = { ...m };
-              if (m.role === 'user') {
-                // Fill the variables in the user message
-                newMessage.content = m.content.replace(/{{\s*([^\s]+)\s*}}/g, (match: any, variableName: string) => {
-                  console.log(`Message ID ${m.id}: Replacing variable ${variableName} with value`, variableValueMap.get(variableName) || match);
-                  return variableValueMap.get(variableName) || match;
-                });
-              }
-              messageTrail.push(newMessage);
-            }
-          }
+          // Resolve config variables / placeholders before handing the trail to the provider.
+          const messageTrail = resolveMessageTrailVariables(message.messageTrail);
 
           // Process the message attachments before passing to the provider
           const needPreprocess = (provider?.info['_needAttachmentPreprocessing'] || 'true') === 'true';
-          let processedMessageTrail = messageTrail.map(message => {
-            if (message.attachments) {
-              message.attachments = message.attachments.map(attachment => {
-                // Convert messages' attachment URLs to absolute path
-                if (attachment.url.startsWith('data:') || attachment.url.startsWith('http')) {
-                  return attachment;
-                } else {
-                  return {
-                    ...attachment,
-                    url: attachment.url.startsWith("http") || fs.existsSync(attachment.url) ? attachment.url : path.join(path.dirname(chatFilePath), attachment.url),
-                  };
-                }
-              });
-            }
-
-            if (needPreprocess && message.attachments) {
-              // A provider can opt out of attachment preprocessing by setting `_needAttachmentPreprocessing` to false
-              // We assume the provider will handle the attachments by itself if it's set to false
-
-              // Or, we can preprocess the attachments here to ensure maximum compatibility
-              // Preprocess the attachment: skip binary files; read text files and insert into the message content
-              for (const attachment of message.attachments) {
-                let fileBuffer;
-
-                if (attachment.url.startsWith('data:')) {
-                  // Base64 encoded data
-                  const base64Data = attachment.url.split(',')[1];
-                  fileBuffer = Buffer.from(base64Data, 'base64');
-                } else {
-                  // Read text files
-                  fileBuffer = fs.readFileSync(attachment.url);
-                }
-
-                const isBinary = isBinaryFileSync(fileBuffer);
-                if (!isBinary) {
-                  message.content = `<${attachment.name}>\n${fileBuffer}\n</${attachment.name}>\n${message.content}`;
-                } else {
-                  message.content = `<${attachment.name}>\nUnsupported attachment\n</${attachment.name}>\n${message.content}`;
-                  vscode.window.showWarningMessage(`Attachment ${attachment.name} is a binary file and cannot be sent.`);
-                }
-              }
-
-              delete message.attachments;
-            }
-            return message;
-          });          
+          const processedMessageTrail = preprocessAttachments(messageTrail, chatFilePath, needPreprocess);
           const latestMessage = processedMessageTrail[processedMessageTrail.length - 1];
 
           let newMessage: ChatMessage = {
             id: Date.now() + Math.floor(Math.random() * 1000),
-            role: 'assistant',
+            role: ROLE_ASSISTANT,
             content: '',
             parentID: latestMessage.id,
             timestamp: new Date().toISOString(),
@@ -460,14 +371,12 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
                 configOverride,
                 (partialText: string) => {
                   // Streaming message from provider
-                  console.log('stream', partialText);
                   newMessage.content += partialText;
                   webviewPanel.webview.postMessage({ type: 'updateMessage', message: newMessage, incomplete: true });
                   webviewPanel.webview.postMessage({ type: 'progress', text: 'Text Completion in Progress', cancelableRequestID: requestID });
                 },
                 async (finalText: string) => {
                   // Streaming completed
-                  console.log('stream completed');
                   // Save the final message
                   if (finalText && finalText.trim()) {
                     newMessage.content = finalText;
@@ -501,7 +410,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             if (providerDisplay) {
               updateProviderStatusBar(providerDisplay.info['name'] || providerDisplay.id);
               this.currentProvider = providerDisplay;
-              this.context.globalState.update(STATEKEY_PREVIOUS_PROVIDER_ID, this.currentProvider.id);
+              this.context.globalState.update(STATE_KEY_PREVIOUS_PROVIDER_ID, this.currentProvider.id);
             } else {
               updateProviderStatusBar(message.providerID, 'Provider not found');
               this.currentProvider = null;

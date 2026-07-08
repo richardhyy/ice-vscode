@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { getConfigurationValue } from './extension';
+import { CHAT_FILE_EXTENSION } from './constants';
 
 export class InstantChatManager {
   private internalInstantChatFolder: string;
@@ -36,13 +37,13 @@ export class InstantChatManager {
     const now = new Date();
     return path.join(
       this.getInstantChatFolder(),
-      `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}-${now.getSeconds()}.chat`
+      `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}-${now.getSeconds()}${CHAT_FILE_EXTENSION}`
     );
   }
 
   private getLastChatFilePath(): string | undefined {
     const files = fs.readdirSync(this.getInstantChatFolder())
-                    .filter(file => file.endsWith('.chat') && !file.startsWith('.'));
+                    .filter(file => file.endsWith(CHAT_FILE_EXTENSION) && !file.startsWith('.'));
     if (files.length === 0) {
       return undefined;
     }

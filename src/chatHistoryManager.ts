@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { UndoRedoManager } from './undoRedoManager';
+import { ROLE_HEAD } from './constants';
 
 export interface Attachment {
   id: number;
@@ -78,7 +79,7 @@ export class ChatHistoryManager {
     let actions = (yaml.load(fileContent) as ChatAction[]) || [];
 
     // Check if the head exists, if not insert it
-    if (actions.length === 0 || !actions[0].role || actions[0].role !== '#head') {
+    if (actions.length === 0 || !actions[0].role || actions[0].role !== ROLE_HEAD) {
       actions = await this.insertHead(actions);
     }
 
@@ -159,7 +160,7 @@ export class ChatHistoryManager {
     const headAction: ChatAction = {
       action: 'Add',
       id: 1,
-      role: '#head',
+      role: ROLE_HEAD,
       content: JSON.stringify({
         version: '1.1',
         createdAt: fileCreationTime,
