@@ -1,5 +1,6 @@
 const icons = require('./icons.js');
 const marked = require('marked');
+const { createStreamingRenderer } = require('./streamingRenderer.js');
 import { Ruler } from './widgets/ruler.js';
 import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
@@ -343,6 +344,101 @@ function _processHtmlToken(token) {
  */
 function _renderMarkdown(content) {
   return marked.parser(_convertMarkdownToTokens(content), PARSER_PARAMETERS);
+}
+
+
+/**
+ * "Thinking" typewriter effect
+ * It types out "Thinking" one character at a time ("T", "Th", … "Thinking"),
+ * then loops a single travelling dot ("Thinking.", "Thinking·.", "Thinking··.")
+ */
+const thinkingAnimator = (function () {
+  const WORD = "Thinking";
+  const TICK_MS = 90;
+  const DOT_HOLD = 4; // ticks each dot position is held before it moves
+  const DOT_POSITIONS = 3;
+  const NBSP = "\u00A0";
+  const SELECTOR = ".reasoning-summary.thinking .reasoning-label";
+  const motionQuery = window.matchMedia ?
+    window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  let intervalID = null;
+
+  function frameText(frame) {
+    if (frame < WORD.length) {
+      return WORD.slice(0, frame + 1);
+    }
+    const dot = Math.floor((frame - WORD.length) / DOT_HOLD) % DOT_POSITIONS;
+    return WORD + NBSP.repeat(dot) + ".";
+  }
+
+  function stop() {
+    if (intervalID !== null) {
+      clearInterval(intervalID);
+      intervalID = null;
+    }
+  }
+
+  function tick() {
+    const labels = document.querySelectorAll(SELECTOR);
+    if (labels.length === 0) {
+      stop();
+      return false;
+    }
+    labels.forEach((label) => {
+      const frame = label._thinkFrame || 0;
+      label.textContent = frameText(frame);
+      label._thinkFrame = frame + 1;
+    });
+    return true;
+  }
+
+  function ensureRunning() {
+    if (motionQuery && motionQuery.matches) {
+      // Reduced motion: show a calm, static label instead of the typewriter.
+      document.querySelectorAll(SELECTOR).forEach((label) => {
+        label.textContent = WORD + "\u2026";
+      });
+      return;
+    }
+    if (intervalID !== null) {
+      return;
+    }
+    if (tick()) {
+      intervalID = setInterval(tick, TICK_MS);
+    }
+  }
+
+  return { ensureRunning };
+})();
+
+
+// Incremental streaming renderer, sharing the same markdown pipeline as the
+// full renderer above. Used to patch streaming assistant messages in place
+// rather than rebuilding the whole message container on every token.
+const streamingRenderer = createStreamingRenderer({
+  marked,
+  parserParameters: PARSER_PARAMETERS,
+  convertMarkdownToTokens: _convertMarkdownToTokens,
+  onThinkingActive: () => thinkingAnimator.ensureRunning(),
+});
+
+
+/**
+ * Creates an animated typing indicator (three composing dots) shown while
+ * waiting for the assistant's first answer token — the familiar "a reply is
+ * being composed" metaphor.
+ * @returns {HTMLElement} The typing indicator element.
+ */
+function _createTypingIndicator() {
+  const indicator = document.createElement("div");
+  indicator.className = "typing-indicator";
+  indicator.setAttribute("aria-label", "Assistant is responding");
+  for (let i = 0; i < 3; i++) {
+    const dot = document.createElement("span");
+    dot.className = "typing-dot";
+    indicator.appendChild(dot);
+  }
+  return indicator;
 }
 
 
@@ -737,16 +833,20 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
       }
     }
 
-    // Avoid a redundant "..." placeholder while only the reasoning is still streaming.
+    // While waiting for the first answer token (and not already showing the
+    // reasoning "Thinking\u2026" state), show an animated typing indicator rather
+    // than a static placeholder — the familiar "composing a reply" metaphor.
+    const isTypingPlaceholder =
+      message.content.length === 0 && message.incomplete && !hasReasoningBlock;
     let answerText = message.content;
     if (message.content.length === 0) {
-      answerText = message.incomplete ? (hasReasoningBlock ? "" : "...") : "(empty)";
+      answerText = message.incomplete ? "" : "(empty)";
     }
     let renderedContent = _renderMarkdown(answerText);
     const markdownContent = document.createElement("div");
     markdownContent.classList.add("markdown-content");
     if (message.content.length === 0) {
-      markdownContent.classList.add("empty");
+      markdownContent.classList.add(isTypingPlaceholder ? "typing" : "empty");
     }
     messageContent.appendChild(markdownContent);
     if (clipContent) {
@@ -789,6 +889,9 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
         renderedContent = processVariables(renderedContent, false);
       }
       markdownContent.innerHTML = renderedContent;
+      if (isTypingPlaceholder) {
+        markdownContent.appendChild(_createTypingIndicator());
+      }
     }
 
     if (!message.incomplete) {
@@ -1459,9 +1562,16 @@ function handleUpdateMessage(message, incomplete = false) {
     activePath = getPathWithMessage(message.id);
     renderConversation(true);
   } else {
-    // If the message is in the active path, rerender the message
+    // While streaming, patch the message in place instead of rebuilding the
+    // whole container on every token. Falls back to a full re-render for the
+    // final frame or whenever a structural change is required.
+    if (incomplete && streamingRenderer.updateStreamingMessage(message)) {
+      return;
+    }
     rerenderMessage(message.id);
   }
+  // Keep the "Thinking" typewriter running whenever a thinking label is shown.
+  thinkingAnimator.ensureRunning();
 }
 
 

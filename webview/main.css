@@ -641,14 +641,13 @@ hr {
     margin-bottom: 0.5em;
 }
 
-/* Gentle pulse only while actively thinking (no answer yet) — live feedback. */
+/*
+ * The "Thinking" label is a typewriter animation driven by thinkingAnimator in
+ * main.js: it types out "Thinking", then loops a single travelling dot — a small
+ * identity cue for ICE. Keep it on one line so the dot can travel cleanly.
+ */
 .reasoning-block .reasoning-summary.thinking .reasoning-label {
-    animation: reasoning-pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes reasoning-pulse {
-    0%, 100% { opacity: 0.55; }
-    50% { opacity: 1; }
+    white-space: nowrap;
 }
 
 .reasoning-block .reasoning-content {
@@ -665,10 +664,69 @@ hr {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .reasoning-block .reasoning-chevron,
-    .reasoning-block .reasoning-summary.thinking .reasoning-label {
+    .reasoning-block .reasoning-chevron {
         transition: none;
+    }
+}
+
+/*
+ * New answer blocks gently fade in as they arrive — a quiet cue that a fresh
+ * chunk of the reply has landed. Disabled under prefers-reduced-motion.
+ */
+.md-block-enter {
+    animation: md-block-enter 0.22s var(--default-cubic-bezier);
+}
+
+@keyframes md-block-enter {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/*
+ * Typing indicator — shown while waiting for the first answer token.
+ * Metaphor: the familiar "composing a reply" dots. Quiet by default; the
+ * staggered bounce is the only motion, and it hands off to real text as soon
+ * as content arrives.
+ */
+.typing-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.34em;
+    height: 1.3em;
+    padding: 0.15em 0;
+    color: var(--assistant-message-text-color);
+}
+
+.typing-indicator .typing-dot {
+    width: 0.42em;
+    height: 0.42em;
+    border-radius: 50%;
+    background-color: currentColor;
+    opacity: 0.3;
+    animation: typing-bounce 1.25s ease-in-out infinite;
+}
+
+.typing-indicator .typing-dot:nth-child(2) {
+    animation-delay: 0.16s;
+}
+
+.typing-indicator .typing-dot:nth-child(3) {
+    animation-delay: 0.32s;
+}
+
+@keyframes typing-bounce {
+    0%, 75%, 100% { opacity: 0.25; transform: translateY(0); }
+    35% { opacity: 0.7; transform: translateY(-0.18em); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .md-block-enter {
         animation: none;
+    }
+
+    .typing-indicator .typing-dot {
+        animation: none;
+        opacity: 0.5;
     }
 }
 

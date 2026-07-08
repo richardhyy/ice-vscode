@@ -243,7 +243,8 @@
     "pretest": "yarn run compile-tests && yarn run compile && yarn run lint",
     "lint": "eslint src --ext ts",
     "test": "node ./out/test/runTest.js",
-    "test:provider": "node scripts/test-provider.js"
+    "test:provider": "node scripts/test-provider.js",
+    "mock-server": "node scripts/mock-server.js"
   },
   "devDependencies": {
     "@types/mime-types": "^2.1.4",
