@@ -31,6 +31,39 @@ let contextMenuTargetElement = null;
 
 let _editingMessageAttachments = {}; // {messageID: [attachment1, attachment2, ...]}
 
+// --- Message selection state -------------------------------------------------
+// Set of currently selected message IDs (stored as strings for consistency with
+// dataset.id). `selectionAnchorID` is the pivot for Shift-click range selection
+// and "Select to Here".
+let selectedMessageIDs = new Set();
+let selectionAnchorID = null;
+
+// Monotonic counter so IDs generated within the same millisecond never collide
+// (Date.now() alone can, e.g. when pasting several messages at once).
+let _idCounter = 0;
+
+// Pending host clipboard reads, keyed by request id -> resolve callback.
+let _pendingClipboardRequests = {};
+let _clipboardRequestCounter = 0;
+
+// Marker that carries structured ICE message data inside an otherwise clean
+// Markdown clipboard payload, so messages round-trip between .chat files while
+// still pasting as readable Markdown anywhere else.
+const ICE_CLIPBOARD_MARKER = "ICE-MESSAGES:v1";
+
+
+/**
+ * Generates a fresh, collision-free numeric message ID.
+ * @returns {number} A unique message ID not present in `flatMessages`.
+ */
+function _freshID() {
+  let id = Date.now() * 1000 + (_idCounter++ % 1000);
+  while (flatMessages[id] !== undefined) {
+    id = Date.now() * 1000 + (_idCounter++ % 1000);
+  }
+  return id;
+}
+
 
 /**
  * Sets the progress indicator in the UI.
@@ -1260,6 +1293,52 @@ function createMessageContainer(message, editing = false, shouldAnimate = false)
   const messageNode = createMessageNode(message, false, editing);
   messageNodesContainer.appendChild(messageNode);
 
+  // Selection affordance: a hover-revealed checkbox sitting just off the inner
+  // edge of the bubble (right of assistant, left of user). Only real, selectable
+  // messages get one (not the internal head, not the unsent draft).
+  const selectable = message.role !== "#head" && !message.isShadow && flatMessages[message.id] !== undefined;
+  if (selectable) {
+    const check = document.createElement("button");
+    check.className = "selection-check";
+    check.setAttribute("role", "checkbox");
+    check.setAttribute("aria-checked", "false");
+    check.setAttribute("aria-label", "Select message");
+    check.innerHTML = icons.ICON_CHECK_LG;
+    // Don't let a checkbox press start a rubber-band or text selection.
+    check.addEventListener("mousedown", (event) => event.stopPropagation());
+    check.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const id = String(message.id);
+      if (event.shiftKey && selectionAnchorID !== null) {
+        _selectRange(selectionAnchorID, id, true);
+      } else {
+        _toggleMessageSelection(id);
+      }
+    });
+    messageNodesContainer.appendChild(check);
+
+    // Modifier-click accelerators that never interfere with plain text
+    // selection: Cmd/Ctrl-click toggles, Shift-click extends a range (only once
+    // a selection already exists, so Shift-click still extends text otherwise).
+    messageContainer.addEventListener("click", (event) => {
+      if (event.target.closest(".selection-check, .cm-editor, a, button")) {
+        return;
+      }
+      const id = String(message.id);
+      if (event.metaKey || event.ctrlKey) {
+        event.preventDefault();
+        _toggleMessageSelection(id);
+      } else if (event.shiftKey && selectedMessageIDs.size > 0 && selectionAnchorID !== null) {
+        event.preventDefault();
+        const selection = window.getSelection && window.getSelection();
+        if (selection && selection.removeAllRanges) {
+          selection.removeAllRanges();
+        }
+        _selectRange(selectionAnchorID, id, false);
+      }
+    });
+  }
+
   if (message.parentID) {
     const siblings = messageIDWithChildren[message.parentID];
     if (siblings && siblings.length > 1) {
@@ -1389,6 +1468,10 @@ function renderConversation(shouldAnimateLastMessage = false) {
 
   // Update branch marks
   _updateRulerMarks();
+
+  // Surface non-blocking interleave suggestions and re-apply the selection.
+  _renderInterleaveGhosts();
+  _updateSelectionUI();
 }
 
 
@@ -1746,6 +1829,944 @@ function resendMessage(messageID) {
 }
 
 
+// ============================================================================
+// Message selection, cross-file copy/paste, and interleave suggestions.
+// These let the user manipulate the chat history more freely: select ranges of
+// messages, copy/paste them (round-tripping within ICE or as clean Markdown),
+// and repair non-interleaved conversations via inline "ghost" suggestions.
+// ============================================================================
+
+/**
+ * The selectable message IDs along the active path, in visual order (as strings).
+ * Excludes the internal `#head` marker.
+ * @returns {string[]}
+ */
+function _selectablePathIDs() {
+  return activePath
+    .map((id) => flatMessages[id])
+    .filter((message) => message && message.role !== "#head")
+    .map((message) => String(message.id));
+}
+
+/**
+ * Orders a set of message IDs to follow their order along the active path.
+ * @param {Array<string|number>} ids
+ * @returns {string[]}
+ */
+function _orderIDsByPath(ids) {
+  const wanted = new Set(ids.map(String));
+  const ordered = activePath.map(String).filter((id) => wanted.has(id));
+  // Keep any ids not on the active path (defensive) in their given order.
+  ids.map(String).forEach((id) => {
+    if (!ordered.includes(id)) {
+      ordered.push(id);
+    }
+  });
+  return ordered;
+}
+
+/**
+ * Reflects the current selection into the DOM and the selection action bar.
+ */
+function _updateSelectionUI() {
+  // Prune selections that are no longer on the active path.
+  const visible = new Set(_selectablePathIDs());
+  for (const id of Array.from(selectedMessageIDs)) {
+    if (!visible.has(id)) {
+      selectedMessageIDs.delete(id);
+    }
+  }
+
+  document.body.classList.toggle("selection-active", selectedMessageIDs.size > 0);
+
+  document.querySelectorAll(".message-container").forEach((container) => {
+    const id = container.dataset.id;
+    const selected = selectedMessageIDs.has(id);
+    container.classList.toggle("selected", selected);
+    const check = container.querySelector(".selection-check");
+    if (check) {
+      check.classList.toggle("checked", selected);
+      check.setAttribute("aria-checked", selected ? "true" : "false");
+    }
+  });
+
+  _renderSelectionBar();
+}
+
+/**
+ * Toggles a single message's selection.
+ * @param {string|number} id
+ */
+function _toggleMessageSelection(id) {
+  id = String(id);
+  if (selectedMessageIDs.has(id)) {
+    selectedMessageIDs.delete(id);
+  } else {
+    selectedMessageIDs.add(id);
+  }
+  selectionAnchorID = id;
+  _updateSelectionUI();
+}
+
+/**
+ * Selects a single message exclusively.
+ * @param {string|number} id
+ */
+function _selectOnly(id) {
+  id = String(id);
+  selectedMessageIDs = new Set([id]);
+  selectionAnchorID = id;
+  _updateSelectionUI();
+}
+
+/**
+ * Selects the contiguous range (along the active path) between anchor and id.
+ * @param {string|number} anchorID
+ * @param {string|number} id
+ * @param {boolean} additive - Whether to keep the existing selection.
+ */
+function _selectRange(anchorID, id, additive) {
+  const ids = _selectablePathIDs();
+  const a = ids.indexOf(String(anchorID));
+  const b = ids.indexOf(String(id));
+  if (a === -1 || b === -1) {
+    _toggleMessageSelection(id);
+    return;
+  }
+  const [lo, hi] = a <= b ? [a, b] : [b, a];
+  if (!additive) {
+    selectedMessageIDs = new Set();
+  }
+  for (let i = lo; i <= hi; i++) {
+    selectedMessageIDs.add(ids[i]);
+  }
+  selectionAnchorID = String(id);
+  _updateSelectionUI();
+}
+
+/**
+ * "Select to Here": selects from the current anchor (or the top of the
+ * conversation) down to the given message.
+ * @param {string|number} id
+ */
+function _selectToHere(id) {
+  let anchor = selectionAnchorID;
+  if (anchor === null || !selectedMessageIDs.has(String(anchor))) {
+    const ids = _selectablePathIDs();
+    anchor = ids.length > 0 ? ids[0] : null;
+  }
+  if (anchor === null) {
+    return;
+  }
+  _selectRange(anchor, id, false);
+}
+
+/**
+ * Clears the current message selection.
+ */
+function _clearSelection() {
+  if (selectedMessageIDs.size === 0) {
+    return;
+  }
+  selectedMessageIDs = new Set();
+  _updateSelectionUI();
+}
+
+/**
+ * Resolves which messages an operation should act on: the whole selection when
+ * the target is part of it, otherwise just the target (file-manager convention).
+ * @param {string|number} targetID
+ * @returns {string[]}
+ */
+function _selectionOrTargetIDs(targetID) {
+  const target = String(targetID);
+  if (selectedMessageIDs.size > 0 && selectedMessageIDs.has(target)) {
+    return _orderIDsByPath(Array.from(selectedMessageIDs));
+  }
+  return [target];
+}
+
+
+// --- Clipboard serialization -------------------------------------------------
+
+function _utf8ToBase64(str) {
+  return btoa(unescape(encodeURIComponent(str)));
+}
+
+function _base64ToUtf8(base64) {
+  return decodeURIComponent(escape(atob(base64)));
+}
+
+/**
+ * Renders a single message as clean Markdown for a transcript.
+ * @param {Object} message
+ * @returns {string}
+ */
+function _messageToMarkdown(message) {
+  let header;
+  if (message.role === "user") {
+    header = "**User**";
+  } else if (message.role === "assistant") {
+    header = "**Assistant**";
+  } else if (message.role === "#config") {
+    header = "**Configuration**";
+  } else {
+    header = `**${message.role}**`;
+  }
+
+  let body;
+  if (message.role === "#config") {
+    let config = {};
+    try {
+      config = JSON.parse(message.content || "{}");
+    } catch (e) {
+      config = {};
+    }
+    const keys = Object.keys(config);
+    body = keys.length > 0 ?
+      keys.map((key) => `- **${key}:** ${String(config[key]).replace(/\n+/g, " ")}`).join("\n") :
+      "_(empty configuration)_";
+  } else {
+    body = (message.content || "").trim() || "_(empty)_";
+  }
+
+  let out = `${header}\n\n${body}`;
+  if (message.attachments && message.attachments.length > 0) {
+    const names = message.attachments.map((attachment) => attachment.name).join(", ");
+    out += `\n\n*Attachments: ${names}*`;
+  }
+  return out;
+}
+
+/**
+ * Builds the clipboard text for a set of messages.
+ * @param {Array<string|number>} ids
+ * @param {boolean} rich - When true, embeds structured ICE data for round-tripping.
+ * @returns {string}
+ */
+function _buildClipboardPayload(ids, rich) {
+  const ordered = _orderIDsByPath(ids);
+  const messages = ordered.map((id) => flatMessages[id]).filter(Boolean);
+  const markdown = messages.map(_messageToMarkdown).join("\n\n---\n\n");
+  if (!rich) {
+    return markdown;
+  }
+  const payload = {
+    v: 1,
+    messages: messages.map((message) => ({
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      attachments: message.attachments || undefined,
+      customFields: message.customFields || undefined,
+      parentID: message.parentID,
+      timestamp: message.timestamp,
+    })),
+  };
+  const encoded = _utf8ToBase64(JSON.stringify(payload));
+  // The structured data lives in a leading HTML comment so it is invisible in
+  // rendered Markdown but lets ICE reconstruct the exact messages on paste.
+  return `<!-- ${ICE_CLIPBOARD_MARKER} ${encoded} -->\n\n${markdown}`;
+}
+
+/**
+ * Copies the given messages to the clipboard.
+ * @param {Array<string|number>} ids
+ * @param {boolean} rich
+ */
+function _copyIDs(ids, rich) {
+  const messages = ids.map((id) => flatMessages[id]).filter(Boolean);
+  if (messages.length === 0) {
+    return;
+  }
+  const text = _buildClipboardPayload(ids, rich);
+  const label = messages.length === 1 ?
+    "Copied 1 message" :
+    `Copied ${messages.length} messages`;
+  vscode.postMessage({ type: "setClipboard", text, label });
+}
+
+function _copySelection(rich) {
+  _copyIDs(_orderIDsByPath(Array.from(selectedMessageIDs)), rich);
+}
+
+
+// --- Paste / insert ----------------------------------------------------------
+
+/**
+ * Requests the host clipboard contents.
+ * @returns {Promise<string>}
+ */
+function _readClipboard() {
+  return new Promise((resolve) => {
+    const requestID = "clip-" + (_clipboardRequestCounter++);
+    _pendingClipboardRequests[requestID] = resolve;
+    vscode.postMessage({ type: "readClipboard", requestID });
+  });
+}
+
+/**
+ * Parses an ICE clipboard payload out of arbitrary clipboard text.
+ * @param {string} text
+ * @returns {Array<Object>|null} The imported messages, or null when absent.
+ */
+function _parseClipboardMessages(text) {
+  if (typeof text !== "string") {
+    return null;
+  }
+  const match = text.match(/<!--\s*ICE-MESSAGES:v1\s+([A-Za-z0-9+/=]+)\s*-->/);
+  if (!match) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(_base64ToUtf8(match[1]));
+    if (payload && Array.isArray(payload.messages)) {
+      return payload.messages;
+    }
+  } catch (e) {
+    console.error("Failed to parse ICE clipboard payload", e);
+  }
+  return null;
+}
+
+/**
+ * Wraps a set of host-persisted actions so they undo/redo as a single step.
+ * @param {Function} run - Performs the mutations (which post addMessage/editMessage/deleteMessage).
+ */
+function _asUndoTransaction(run) {
+  vscode.postMessage({ type: "beginTransaction" });
+  try {
+    run();
+  } finally {
+    vscode.postMessage({ type: "endTransaction" });
+  }
+}
+
+/**
+ * Briefly highlights messages (e.g. just-pasted ones) and scrolls the first into
+ * view, so the user can see exactly where an operation landed.
+ * @param {Array<string|number>} ids
+ */
+function _flashMessages(ids) {
+  if (!ids || ids.length === 0) {
+    return;
+  }
+  const reduceMotion = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const first = document.querySelector(`.message-container[data-id="${ids[0]}"]`);
+  if (first) {
+    first.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+  }
+  ids.forEach((id) => {
+    const element = document.querySelector(`.message-container[data-id="${id}"]`);
+    if (element) {
+      element.classList.remove("just-changed");
+      // Force reflow so the animation restarts if the class was just removed.
+      void element.offsetWidth;
+      element.classList.add("just-changed");
+      setTimeout(() => element.classList.remove("just-changed"), 1800);
+    }
+  });
+}
+
+/**
+ * Reads the clipboard and inserts its messages after the given target message.
+ * @param {string|number|null} targetID
+ */
+async function _pasteMessagesAfter(targetID) {
+  const text = await _readClipboard();
+  const imported = _parseClipboardMessages(text);
+  if (imported && imported.length > 0) {
+    _insertImportedMessages(targetID, imported);
+  } else if (typeof text === "string" && text.trim().length > 0) {
+    // No ICE payload — insert the raw clipboard text as a single user message.
+    _insertImportedMessages(targetID, [{
+      id: -1,
+      role: "user",
+      content: text.trim(),
+      parentID: null,
+      timestamp: new Date().toISOString(),
+    }]);
+  } else {
+    vscode.postMessage({ type: "error", error: "Clipboard is empty" });
+  }
+}
+
+/**
+ * Inserts imported messages as a new branch grafted after the target message,
+ * remapping IDs and preserving the internal parent/child structure.
+ * @param {string|number|null} targetID
+ * @param {Array<Object>} imported
+ */
+function _insertImportedMessages(targetID, imported) {
+  let graftParentID = targetID != null && flatMessages[targetID] ? flatMessages[targetID].id : null;
+  if (graftParentID === null) {
+    const head = Object.values(flatMessages).find((message) => message.role === "#head");
+    graftParentID = head ? head.id : null;
+  }
+
+  const importedIDs = new Set(imported.map((message) => String(message.id)));
+  const idMap = {};
+  imported.forEach((message) => {
+    idMap[String(message.id)] = _freshID();
+  });
+
+  // Add parents before children so the persisted action log stays consistent.
+  const added = new Set();
+  const remaining = imported.slice();
+  const newIDs = [];
+  let lastNewID = null;
+  let guard = 0;
+  _asUndoTransaction(() => {
+    while (remaining.length > 0 && guard++ < 100000) {
+      let progressed = false;
+      for (let i = 0; i < remaining.length; i++) {
+        const message = remaining[i];
+        const originalParent = message.parentID === null || message.parentID === undefined ?
+          null : String(message.parentID);
+        const parentInImport = originalParent !== null && importedIDs.has(originalParent);
+        if (parentInImport && !added.has(originalParent)) {
+          continue; // Wait until this message's parent has been added.
+        }
+        const newMessage = {
+          id: idMap[String(message.id)],
+          role: message.role,
+          content: message.content || "",
+          parentID: parentInImport ? idMap[originalParent] : graftParentID,
+          timestamp: new Date().toISOString(),
+        };
+        if (message.attachments) {
+          newMessage.attachments = message.attachments;
+        }
+        if (message.customFields) {
+          newMessage.customFields = message.customFields;
+        }
+        updateFlatMessages(newMessage);
+        addMessage(newMessage);
+        added.add(String(message.id));
+        newIDs.push(newMessage.id);
+        lastNewID = newMessage.id;
+        remaining.splice(i, 1);
+        i--;
+        progressed = true;
+      }
+      if (!progressed) {
+        break; // Broken parent references — stop rather than loop forever.
+      }
+    }
+  });
+
+  scanMessageTree();
+  if (lastNewID !== null) {
+    activePath = getPathWithMessage(lastNewID);
+  }
+  renderConversation();
+
+  // Make it obvious where the messages landed.
+  const visibleNewIDs = newIDs.filter((id) => activePath.map(String).includes(String(id)));
+  _flashMessages(visibleNewIDs.length > 0 ? visibleNewIDs : newIDs);
+}
+
+
+// --- Interleave verification (non-blocking suggestions) ----------------------
+
+function _oppositeRole(role) {
+  return role === "user" ? "assistant" : "user";
+}
+
+/**
+ * Inserts dashed "ghost" suggestions wherever the active path is not properly
+ * interleaved (two adjacent messages of the same conversational role). These
+ * never block anything — they simply offer a one-click fix.
+ */
+function _renderInterleaveGhosts() {
+  const isConversational = (role) => role === "user" || role === "assistant";
+  for (let i = 1; i < activePath.length; i++) {
+    const previous = flatMessages[activePath[i - 1]];
+    const current = flatMessages[activePath[i]];
+    if (!previous || !current) {
+      continue;
+    }
+    if (isConversational(previous.role) && isConversational(current.role) && previous.role === current.role) {
+      const containerCurrent = conversationContainer.querySelector(
+        `.message-container[data-id="${current.id}"]`
+      );
+      if (containerCurrent) {
+        const ghost = _createGhostMessage(previous.id, current.id, _oppositeRole(previous.role));
+        containerCurrent.insertAdjacentElement("beforebegin", ghost);
+      }
+    }
+  }
+}
+
+/**
+ * Creates a dashed ghost placeholder for a missing message between two
+ * same-role messages.
+ * @param {string|number} afterID - The message the missing one would follow.
+ * @param {string|number} beforeID - The message the missing one would precede.
+ * @param {string} missingRole - The role of the missing message.
+ * @returns {HTMLElement}
+ */
+function _createGhostMessage(afterID, beforeID, missingRole) {
+  const container = document.createElement("div");
+  // Deliberately not a ".message-container" — ghosts have their own styling and
+  // must not inherit the bubble entrance transforms (which hide them off-screen
+  // under prefers-reduced-motion).
+  container.className = "ghost-message bubble " + missingRole;
+  container.dataset.ghost = "true";
+
+  const bubble = document.createElement("div");
+  bubble.className = "ghost-bubble";
+  bubble.setAttribute("role", "button");
+  bubble.tabIndex = 0;
+  const label = missingRole === "assistant" ? "Missing assistant reply" : "Missing user message";
+  bubble.setAttribute("aria-label", label + ". Click to add one.");
+
+  const labelElement = document.createElement("span");
+  labelElement.className = "ghost-label";
+  labelElement.textContent = label;
+  bubble.appendChild(labelElement);
+
+  const actions = document.createElement("div");
+  actions.className = "ghost-actions";
+
+  const addAction = document.createElement("span");
+  addAction.className = "ghost-action ghost-action-add";
+  addAction.innerHTML = icons.ICON_PLUS + `<span>Add ${missingRole === "assistant" ? "reply" : "message"}</span>`;
+  actions.appendChild(addAction);
+
+  const mergeAction = document.createElement("span");
+  mergeAction.className = "ghost-action ghost-action-merge";
+  mergeAction.innerHTML = icons.ICON_MERGE + "<span>Merge</span>";
+  const afterMessage = flatMessages[afterID];
+  mergeAction.title = "Merge these two " + (afterMessage ? afterMessage.role : "") + " messages into one";
+  actions.appendChild(mergeAction);
+
+  bubble.appendChild(actions);
+  container.appendChild(bubble);
+
+  const doAdd = (event) => {
+    event.stopPropagation();
+    _insertMessageBetween(afterID, beforeID, missingRole);
+  };
+  const doMerge = (event) => {
+    event.stopPropagation();
+    _mergeMessages(afterID, beforeID);
+  };
+  bubble.addEventListener("click", doAdd);
+  bubble.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      doAdd(event);
+    }
+  });
+  addAction.addEventListener("click", doAdd);
+  mergeAction.addEventListener("click", doMerge);
+
+  return container;
+}
+
+/**
+ * Inserts a new, empty message of the given role between a parent and child,
+ * then opens it for editing.
+ * @param {string|number} parentID
+ * @param {string|number} childID
+ * @param {string} role
+ */
+function _insertMessageBetween(parentID, childID, role) {
+  const id = _freshID();
+  const message = {
+    id,
+    role,
+    content: "",
+    parentID: Number(parentID),
+    timestamp: new Date().toISOString(),
+  };
+
+  _asUndoTransaction(() => {
+    updateFlatMessages(message);
+    addMessage(message);
+
+    const child = flatMessages[childID];
+    if (child) {
+      child.parentID = id;
+      updateFlatMessages(child);
+      vscode.postMessage({ type: "editMessage", messageID: child.id, updates: { parentID: id } });
+    }
+  });
+
+  scanMessageTree();
+  activePath = getPathWithMessage(id);
+  renderConversation();
+  toggleEdit(id);
+}
+
+/**
+ * Merges the second message into the first (concatenating content and
+ * attachments) and re-parents the second's children onto the first.
+ * @param {string|number} firstID
+ * @param {string|number} secondID
+ */
+function _mergeMessages(firstID, secondID) {
+  const first = flatMessages[firstID];
+  const second = flatMessages[secondID];
+  if (!first || !second) {
+    return;
+  }
+
+  first.content = ((first.content || "") + "\n\n" + (second.content || "")).trim();
+  if (second.attachments && second.attachments.length > 0) {
+    first.attachments = (first.attachments || []).concat(second.attachments);
+  }
+
+  _asUndoTransaction(() => {
+    updateFlatMessages(first);
+    vscode.postMessage({
+      type: "editMessage",
+      messageID: first.id,
+      updates: { content: first.content, attachments: first.attachments || [] },
+    });
+
+    const children = messageIDWithChildren[secondID] || [];
+    children.forEach((childID) => {
+      const child = flatMessages[childID];
+      if (child) {
+        child.parentID = Number(firstID);
+        updateFlatMessages(child);
+        vscode.postMessage({ type: "editMessage", messageID: child.id, updates: { parentID: Number(firstID) } });
+      }
+    });
+
+    delete flatMessages[secondID];
+    vscode.postMessage({ type: "deleteMessage", messageID: secondID });
+  });
+
+  scanMessageTree();
+  activePath = getPathWithMessage(firstID);
+  renderConversation();
+}
+
+/**
+ * Deletes multiple messages, re-parenting any surviving descendants around the
+ * deleted set so nothing is unintentionally orphaned.
+ * @param {Array<string|number>} ids
+ */
+function _deleteMessages(ids) {
+  const deleteSet = new Set(ids.map(String));
+  deleteSet.forEach((id) => {
+    const message = flatMessages[id];
+    if (message && message.role === "#head") {
+      deleteSet.delete(id);
+    }
+  });
+  if (deleteSet.size === 0) {
+    return;
+  }
+
+  const survivingParent = (parentID) => {
+    let current = parentID;
+    while (current !== null && current !== undefined && deleteSet.has(String(current))) {
+      const parent = flatMessages[current];
+      current = parent ? parent.parentID : null;
+    }
+    return current === undefined ? null : current;
+  };
+
+  // Pick a reasonable place to land the active path after deletion.
+  let landingID = null;
+  for (const id of deleteSet) {
+    const message = flatMessages[id];
+    if (message) {
+      landingID = survivingParent(message.parentID);
+      break;
+    }
+  }
+
+  _asUndoTransaction(() => {
+    Object.values(flatMessages).forEach((message) => {
+      if (deleteSet.has(String(message.id))) {
+        return;
+      }
+      if (message.parentID !== null && message.parentID !== undefined && deleteSet.has(String(message.parentID))) {
+        const newParent = survivingParent(message.parentID);
+        message.parentID = newParent;
+        updateFlatMessages(message);
+        vscode.postMessage({ type: "editMessage", messageID: message.id, updates: { parentID: newParent } });
+      }
+    });
+
+    deleteSet.forEach((id) => {
+      delete flatMessages[id];
+      vscode.postMessage({ type: "deleteMessage", messageID: id });
+    });
+  });
+
+  scanMessageTree();
+  if (landingID !== null && flatMessages[landingID]) {
+    activePath = getPathWithMessage(landingID);
+  } else {
+    const last = getLastMessage();
+    activePath = last && last.id ? getPathWithMessage(last.id) : [];
+  }
+  renderConversation();
+}
+
+
+// --- Selection action bar ----------------------------------------------------
+
+/**
+ * Shows/updates the floating selection action bar (created lazily).
+ */
+function _renderSelectionBar() {
+  let bar = document.getElementById("selection-bar");
+  const count = selectedMessageIDs.size;
+  if (count === 0) {
+    if (bar) {
+      bar.classList.remove("visible", "confirming");
+    }
+    return;
+  }
+  if (!bar) {
+    bar = _createSelectionBar();
+    document.body.appendChild(bar);
+  }
+  bar.querySelector(".selection-bar-count").textContent =
+    count === 1 ? "1 selected" : `${count} selected`;
+  bar._confirmLabel.textContent =
+    count === 1 ? "Delete this message?" : `Delete ${count} messages?`;
+  bar.classList.remove("confirming");
+  bar.classList.add("visible");
+}
+
+/**
+ * Builds the selection action bar element.
+ * @returns {HTMLElement}
+ */
+function _createSelectionBar() {
+  const bar = document.createElement("div");
+  bar.id = "selection-bar";
+  bar.setAttribute("role", "toolbar");
+  bar.setAttribute("aria-label", "Selected messages");
+
+  const count = document.createElement("span");
+  count.className = "selection-bar-count";
+  bar.appendChild(count);
+
+  const addButton = (parent, icon, text, title, className) => {
+    const button = document.createElement("button");
+    button.className = "selection-bar-button" + (className ? " " + className : "");
+    button.title = title;
+    button.innerHTML = icon + (text ? `<span>${text}</span>` : "");
+    parent.appendChild(button);
+    return button;
+  };
+
+  const actions = document.createElement("div");
+  actions.className = "selection-bar-actions";
+  bar.appendChild(actions);
+
+  // Merged copy control: a split button whose main action copies for ICE
+  // (round-trippable), with a caret revealing the Markdown-only variant for
+  // pasting outside ICE.
+  const copyGroup = document.createElement("div");
+  copyGroup.className = "selection-bar-copy";
+
+  const closeCopyMenu = () => {
+    copyGroup.classList.remove("open");
+    copyCaret.setAttribute("aria-expanded", "false");
+  };
+
+  const copyMain = document.createElement("button");
+  copyMain.className = "selection-bar-button primary selection-bar-copy-main";
+  copyMain.title = "Copy the selected messages (paste back into ICE, or as Markdown elsewhere)";
+  copyMain.innerHTML = icons.ICON_CLIPBOARD + "<span>Copy</span>";
+  copyMain.addEventListener("click", () => { _copySelection(true); closeCopyMenu(); });
+  copyGroup.appendChild(copyMain);
+
+  const copyCaret = document.createElement("button");
+  copyCaret.className = "selection-bar-button selection-bar-copy-caret";
+  copyCaret.title = "More copy options";
+  copyCaret.setAttribute("aria-haspopup", "true");
+  copyCaret.setAttribute("aria-expanded", "false");
+  copyCaret.setAttribute("aria-label", "More copy options");
+  copyCaret.innerHTML = icons.ICON_CARET_DOWN;
+  copyCaret.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const open = copyGroup.classList.toggle("open");
+    copyCaret.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  copyGroup.appendChild(copyCaret);
+
+  const menu = document.createElement("div");
+  menu.className = "selection-bar-menu";
+  menu.setAttribute("role", "menu");
+  const addMenuItem = (icon, title, description, rich) => {
+    const item = document.createElement("button");
+    item.className = "selection-bar-menu-item";
+    item.setAttribute("role", "menuitem");
+    item.innerHTML = icon + `<span class="selection-bar-menu-text">${title}<small>${description}</small></span>`;
+    item.addEventListener("click", () => { _copySelection(rich); closeCopyMenu(); });
+    menu.appendChild(item);
+  };
+  addMenuItem(icons.ICON_CLIPBOARD, "Copy for ICE", "Round-trips when pasted back", true);
+  addMenuItem(icons.ICON_MARKDOWN, "Copy as Markdown", "Clean text for pasting elsewhere", false);
+  copyGroup.appendChild(menu);
+
+  // Close the menu when clicking anywhere outside the split button.
+  document.addEventListener("click", (event) => {
+    if (!copyGroup.contains(event.target)) {
+      closeCopyMenu();
+    }
+  });
+
+  actions.appendChild(copyGroup);
+
+  addButton(actions, icons.ICON_TRASH, "Delete", "Delete selected messages", "danger")
+    .addEventListener("click", () => bar.classList.add("confirming"));
+  addButton(actions, icons.ICON_XMARK, "", "Clear selection (Esc)", "icon-only")
+    .addEventListener("click", () => _clearSelection());
+
+  const confirm = document.createElement("div");
+  confirm.className = "selection-bar-confirm";
+  const confirmLabel = document.createElement("span");
+  confirmLabel.className = "selection-bar-confirm-label";
+  confirm.appendChild(confirmLabel);
+  bar._confirmLabel = confirmLabel;
+  addButton(confirm, icons.ICON_TRASH, "Delete", "Confirm deletion", "danger")
+    .addEventListener("click", () => {
+      const ids = Array.from(selectedMessageIDs);
+      bar.classList.remove("confirming");
+      _deleteMessages(ids);
+      _clearSelection();
+    });
+  addButton(confirm, "", "Cancel", "Keep the selected messages")
+    .addEventListener("click", () => bar.classList.remove("confirming"));
+  bar.appendChild(confirm);
+
+  return bar;
+}
+
+
+// --- Rubber-band (marquee) selection -----------------------------------------
+(function _installRubberBand() {
+  let active = false;
+  let moved = false;
+  let downClientX = 0;
+  let downClientY = 0;
+  let startX = 0;
+  let startY = 0; // Content coordinates, relative to conversationContainer.
+  let additive = false;
+  let baseSelection = null;
+  let marquee = null;
+  const THRESHOLD = 4;
+
+  function contentPoint(clientX, clientY) {
+    const rect = conversationContainer.getBoundingClientRect();
+    return { x: clientX - rect.left, y: clientY - rect.top };
+  }
+
+  function isEmptyAreaTarget(target) {
+    if (!target) {
+      return false;
+    }
+    const scroll = document.getElementById("conversation-scroll-container");
+    if (target === conversationContainer || target === scroll) {
+      return true;
+    }
+    // The container itself (the empty region beside a bubble), but not its
+    // descendants — those own their text selection and controls.
+    return Boolean(target.classList && target.classList.contains("message-container") && !target.dataset.ghost);
+  }
+
+  function onMouseDown(event) {
+    if (event.button !== 0 || !isEmptyAreaTarget(event.target)) {
+      return;
+    }
+    active = true;
+    moved = false;
+    additive = event.shiftKey || event.metaKey || event.ctrlKey;
+    baseSelection = new Set(selectedMessageIDs);
+    downClientX = event.clientX;
+    downClientY = event.clientY;
+    const point = contentPoint(event.clientX, event.clientY);
+    startX = point.x;
+    startY = point.y;
+    window.addEventListener("mousemove", onMouseMove, true);
+    window.addEventListener("mouseup", onMouseUp, true);
+  }
+
+  function onMouseMove(event) {
+    if (!active) {
+      return;
+    }
+    if (!moved) {
+      if (Math.abs(event.clientX - downClientX) + Math.abs(event.clientY - downClientY) < THRESHOLD) {
+        return;
+      }
+      moved = true;
+      document.body.classList.add("rubber-banding");
+      marquee = document.createElement("div");
+      marquee.className = "selection-marquee";
+      conversationContainer.appendChild(marquee);
+    }
+    event.preventDefault();
+
+    const point = contentPoint(event.clientX, event.clientY);
+    const x1 = Math.min(startX, point.x);
+    const y1 = Math.min(startY, point.y);
+    const x2 = Math.max(startX, point.x);
+    const y2 = Math.max(startY, point.y);
+    marquee.style.left = x1 + "px";
+    marquee.style.top = y1 + "px";
+    marquee.style.width = (x2 - x1) + "px";
+    marquee.style.height = (y2 - y1) + "px";
+
+    const next = additive ? new Set(baseSelection) : new Set();
+    let lastHit = null;
+    document.querySelectorAll(".message-container").forEach((element) => {
+      const id = element.dataset.id;
+      if (!id || element.dataset.ghost) {
+        return;
+      }
+      const message = flatMessages[id];
+      if (!message || message.role === "#head") {
+        return;
+      }
+      const top = element.offsetTop;
+      const left = element.offsetLeft;
+      const bottom = top + element.offsetHeight;
+      const right = left + element.offsetWidth;
+      if (left < x2 && right > x1 && top < y2 && bottom > y1) {
+        next.add(String(id));
+        lastHit = String(id);
+      }
+    });
+    selectedMessageIDs = next;
+    if (lastHit !== null) {
+      selectionAnchorID = lastHit;
+    }
+    _updateSelectionUI();
+  }
+
+  function onMouseUp() {
+    window.removeEventListener("mousemove", onMouseMove, true);
+    window.removeEventListener("mouseup", onMouseUp, true);
+    document.body.classList.remove("rubber-banding");
+    if (marquee) {
+      marquee.remove();
+      marquee = null;
+    }
+    if (active && !moved && !additive) {
+      // A plain click on empty space clears the selection.
+      _clearSelection();
+    }
+    active = false;
+  }
+
+  document.addEventListener("mousedown", onMouseDown);
+})();
+
+
 /**
  * Performs a context menu operation on a message.
  * @param {string} operation - The operation to perform.
@@ -1804,10 +2825,26 @@ function contextMenuOperation(operation, subOperation) {
       resendMessage(messageID);
       break;
     case "copy":
+    case "copyRich":
+      _copyIDs(_selectionOrTargetIDs(messageID), true);
+      break;
+    case "copyMarkdown":
+      _copyIDs(_selectionOrTargetIDs(messageID), false);
+      break;
+    case "copyPlainText":
       vscode.postMessage({
         type: "setClipboard",
         text: flatMessages[messageID].content,
       });
+      break;
+    case "toggleSelect":
+      _toggleMessageSelection(messageID);
+      break;
+    case "selectToHere":
+      _selectToHere(messageID);
+      break;
+    case "paste":
+      _pasteMessagesAfter(messageID);
       break;
     case "insertConfigUpdate":
       const position = subOperation;
@@ -1969,6 +3006,19 @@ window.addEventListener("message", (event) => {
     case "loadSnippets":
       snippets = message.snippets;
       break;
+    case "clipboardContent": {
+      const resolver = _pendingClipboardRequests[message.requestID];
+      if (resolver) {
+        delete _pendingClipboardRequests[message.requestID];
+        resolver(message.text);
+      }
+      break;
+    }
+    case "pasteAtEnd": {
+      const lastID = activePath.length > 0 ? activePath[activePath.length - 1] : null;
+      _pasteMessagesAfter(lastID);
+      break;
+    }
     case "showErrorOverlay":
       const errorID = message.errorID;
       const detail = message.detail;
@@ -1986,6 +3036,14 @@ window.addEventListener("message", (event) => {
       break;
     default:
       console.error("Unknown message type", message.type);
+  }
+});
+
+document.addEventListener('keydown', function (event) {
+  // Escape clears an active message selection (without stealing Escape from
+  // editors or menus when nothing is selected).
+  if (event.key === "Escape" && selectedMessageIDs.size > 0) {
+    _clearSelection();
   }
 });
 

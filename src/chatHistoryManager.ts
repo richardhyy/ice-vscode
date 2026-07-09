@@ -36,7 +36,7 @@ function deepEqual(x: any, y: any): boolean {
 export class ChatHistoryManager {
   private chatFilePath: string;
   private actionQueue: ChatAction[] = [];
-  private isWriting = false;
+  private flushChain: Promise<void> = Promise.resolve();
   private undoRedoManager = new UndoRedoManager();
 
   constructor(chatFilePath: string) {
@@ -86,45 +86,73 @@ export class ChatHistoryManager {
     return actions;
   }
 
-  public async flush(): Promise<void> {
-    if (!this.isWriting && this.actionQueue.length > 0) {
-      this.isWriting = true;
-      const actionsToWrite = [...this.actionQueue];
+  /**
+   * Drains the pending action queue to disk. Writes are serialized (so appends
+   * never race) and the returned promise resolves only once everything queued so
+   * far has been written — letting callers such as undo safely read the file next.
+   */
+  public flush(): Promise<void> {
+    this.flushChain = this.flushChain.then(() => this.drainQueue());
+    return this.flushChain;
+  }
+
+  private async drainQueue(): Promise<void> {
+    while (this.actionQueue.length > 0) {
+      const actionsToWrite = this.actionQueue;
       this.actionQueue = [];
       await this.writeActions(actionsToWrite);
-      this.isWriting = false;
     }
   }
 
   public async undo(): Promise<ChatAction[] | undefined> {
-    const action = this.undoRedoManager.undo();
-    if (action) {
+    const group = this.undoRedoManager.undo();
+    if (group && group.length > 0) {
       await this.flush();
 
       const fileContent = await fs.promises.readFile(this.chatFilePath, 'utf-8');
-      const actions = yaml.load(fileContent) as ChatAction[];
+      const actions = (yaml.load(fileContent) as ChatAction[]) || [];
 
-      if (deepEqual(actions[actions.length - 1], action)) {
-        actions.pop();
-        await fs.promises.writeFile(this.chatFilePath, yaml.dump(actions), 'utf-8');
-      } else {
-        console.error('Action mismatch');
-        return undefined;
+      // A group's actions are the last N actions of the file, in application
+      // order. Remove them from the tail (reverse order), verifying each match
+      // so we never corrupt the file if something unexpected is there.
+      for (let i = group.length - 1; i >= 0; i--) {
+        if (actions.length > 0 && deepEqual(actions[actions.length - 1], group[i])) {
+          actions.pop();
+        } else {
+          console.error('Undo action mismatch; aborting undo');
+          return undefined;
+        }
       }
 
+      await fs.promises.writeFile(this.chatFilePath, yaml.dump(actions), 'utf-8');
       return actions;
     } else {
       return undefined;
     }
   }
 
-  public async redo(): Promise<ChatAction | undefined> {
-    const action = this.undoRedoManager.redo();
-    if (action) {
-      this.enqueueAction(action, true);
+  public async redo(): Promise<ChatAction[] | undefined> {
+    const group = this.undoRedoManager.redo();
+    if (group && group.length > 0) {
+      // Re-apply the whole group as one unit (bypassing the undo/redo manager,
+      // which already moved the group back onto the undo stack).
+      await this.flush();
+      this.actionQueue.push(...group);
+      await this.flush();
+      return group;
     }
 
-    return action;
+    return undefined;
+  }
+
+  /** Begins an undo transaction so a compound operation reverts as one step. */
+  public beginTransaction(): void {
+    this.undoRedoManager.beginGroup();
+  }
+
+  /** Ends the current undo transaction. */
+  public endTransaction(): void {
+    this.undoRedoManager.endGroup();
   }
 
   private enqueueAction(action: ChatAction, flush: boolean = true) {
@@ -138,11 +166,11 @@ export class ChatHistoryManager {
       this.actionQueue.push(action);
     }
 
-    if (flush && !this.isWriting) {
-      this.flush();
-    }
-
     this.undoRedoManager.pushAction(action);
+
+    if (flush) {
+      void this.flush();
+    }
   }
 
   private async writeActions(actions: ChatAction[]): Promise<void> {

@@ -323,6 +323,11 @@ hr {
     display: flex;
     flex-direction: column;
     gap: var(--padding);
+    /* Top/bottom breathing room lives here (not on first/last child margins) so
+       it survives the rubber-band marquee being appended as an extra child. */
+    padding: var(--padding) 0;
+    /* Positioned so the rubber-band marquee can be drawn in content coordinates. */
+    position: relative;
 }
 
 .header-content {
@@ -466,14 +471,6 @@ hr {
     transform: translateX(-100%);
 }
 
-.message-container:first-child {
-    margin-top: var(--padding);
-}
-
-.message-container:last-child {
-    margin-bottom: var(--padding);
-}
-
 .message-container.user {
     justify-content: flex-end;
     opacity: 0;
@@ -559,6 +556,8 @@ hr {
     display: flex;
     flex-direction: column;
     gap: 0.5em;
+    /* Anchors the selection checkbox to the inner edge of the bubble. */
+    position: relative;
 }
 
 .message-container.user .message-content {
@@ -1366,5 +1365,437 @@ hr {
 
     .message-content.editing {
         max-width: 70vw;
+    }
+}
+
+/* ==========================================================================
+   Message selection, cross-file copy/paste, and interleave suggestions
+   ========================================================================== */
+
+/*
+ * Selection checkbox — a quiet circular control tucked into the top-right corner
+ * inside each message. Placing it inside keeps it visible at any width (wide
+ * bubbles never push it off-screen) and anchored to the top so its vertical
+ * position never depends on the message height. Hidden until a selection is
+ * active; it never interferes with reading or selecting text.
+ */
+.selection-check {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    transform: scale(0.85);
+    width: 18px;
+    height: 18px;
+    box-sizing: border-box;
+    padding: 0;
+    border-radius: 50%;
+    border: 1.5px solid color-mix(in srgb, var(--secondary-color) 55%, var(--primary-color));
+    background-color: color-mix(in srgb, var(--bg-color) 82%, transparent);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-color) 40%, transparent);
+    color: var(--edit-operation-foreground-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 3;
+    transition: opacity 0.15s var(--default-cubic-bezier),
+                transform 0.15s var(--default-cubic-bezier),
+                background-color 0.15s var(--default-cubic-bezier),
+                border-color 0.15s var(--default-cubic-bezier);
+}
+
+.selection-check svg {
+    width: 11px;
+    height: 11px;
+    opacity: 0;
+    transform: scale(0.6);
+    transition: opacity 0.12s var(--default-cubic-bezier),
+                transform 0.12s var(--default-cubic-bezier);
+}
+
+/*
+ * Checkboxes are shown only once a selection exists (selection mode). They are
+ * intentionally not revealed on mere hover, so an idle conversation stays clean;
+ * selection is started via Cmd/Ctrl-click, rubber-band, keyboard focus, or the
+ * context menu, after which every row's checkbox appears.
+ */
+body.selection-active .selection-check {
+    opacity: 1;
+    pointer-events: auto;
+    transform: scale(1);
+}
+
+.selection-check:hover {
+    border-color: var(--accent-color);
+    background-color: color-mix(in srgb, var(--accent-color) 15%, var(--bg-color));
+}
+
+.selection-check:focus-visible {
+    outline: 1px solid var(--accent-color);
+    outline-offset: 2px;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.selection-check.checked {
+    opacity: 1;
+    pointer-events: auto;
+    background-color: var(--accent-color);
+    border-color: var(--accent-color);
+    color: var(--vscode-button-foreground, #fff);
+    transform: scale(1);
+}
+
+.selection-check.checked svg {
+    opacity: 1;
+    transform: scale(1);
+}
+
+/* Selected message — a soft accent ring around the message surface. */
+.message-container.selected .message-content,
+.message-container.selected > .message-nodes-container > .config-content,
+.message-container.selected > .message-nodes-container > .header-content {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 75%, transparent);
+    transition: box-shadow 0.15s var(--default-cubic-bezier);
+}
+
+/*
+ * A brief accent glow that marks where an operation just landed (e.g. pasted
+ * messages), so the user can see the result without it lingering.
+ */
+.message-container.just-changed .message-content,
+.message-container.just-changed > .message-nodes-container > .config-content,
+.message-container.just-changed > .message-nodes-container > .header-content {
+    animation: just-changed-glow 1.8s var(--default-cubic-bezier);
+}
+
+@keyframes just-changed-glow {
+    0% {
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 90%, transparent);
+    }
+    60% {
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 75%, transparent);
+    }
+    100% {
+        box-shadow: 0 0 0 2px transparent;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .message-container.just-changed .message-content,
+    .message-container.just-changed > .message-nodes-container > .config-content,
+    .message-container.just-changed > .message-nodes-container > .header-content {
+        animation: none;
+    }
+}
+
+/* Rubber-band (marquee) rectangle, drawn in conversation content coordinates. */
+.selection-marquee {
+    position: absolute;
+    z-index: 6;
+    pointer-events: none;
+    border: 1px solid var(--accent-color);
+    background-color: color-mix(in srgb, var(--accent-color) 12%, transparent);
+    border-radius: var(--border-radius-small);
+}
+
+body.rubber-banding {
+    cursor: crosshair;
+}
+
+body.rubber-banding .message-content,
+body.rubber-banding .message-content *,
+body.rubber-banding .config-content,
+body.rubber-banding .config-content * {
+    user-select: none !important;
+}
+
+/*
+ * Floating selection action bar — a HUD that overlays the top of the
+ * conversation. It never displaces page content (pure overlay), stays
+ * understated (pill), and is centred so it clears the "Back" pill (top-right).
+ */
+#selection-bar {
+    position: fixed;
+    left: 50%;
+    top: var(--padding);
+    transform: translateX(-50%) translateY(-16px);
+    display: flex;
+    align-items: center;
+    gap: 0.25em;
+    padding: 5px 6px 5px 14px;
+    font-size: var(--fs-footnote);
+    color: var(--vscode-foreground, var(--primary-color));
+    background-color: var(--assistant-message-background-color);
+    border: 1px solid color-mix(in srgb, var(--assistant-message-background-color) 78%, var(--shadow-color));
+    border-radius: var(--border-radius-pill);
+    box-shadow: 0 4px 18px color-mix(in srgb, var(--shadow-color) 55%, transparent);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 20;
+    transition: opacity 0.2s var(--default-cubic-bezier),
+                transform 0.2s var(--default-cubic-bezier);
+}
+
+#selection-bar.visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+}
+
+.selection-bar-count {
+    color: var(--vscode-foreground, var(--primary-color));
+    margin-right: 0.3em;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.selection-bar-actions,
+.selection-bar-confirm {
+    display: flex;
+    align-items: center;
+    gap: 0.2em;
+}
+
+.selection-bar-confirm {
+    display: none;
+}
+
+#selection-bar.confirming .selection-bar-actions {
+    display: none;
+}
+
+#selection-bar.confirming .selection-bar-confirm {
+    display: flex;
+}
+
+.selection-bar-confirm-label {
+    color: var(--vscode-foreground, var(--primary-color));
+    margin-right: 0.3em;
+    white-space: nowrap;
+}
+
+.selection-bar-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    border: none;
+    background-color: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    padding: 0.4em 0.7em;
+    border-radius: var(--border-radius-pill);
+    transition: background-color 0.15s var(--default-cubic-bezier),
+                color 0.15s var(--default-cubic-bezier);
+}
+
+.selection-bar-button svg {
+    width: 1em;
+    height: 1em;
+}
+
+.selection-bar-button:hover {
+    background-color: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.selection-bar-button.icon-only {
+    padding: 0.4em;
+    color: var(--vscode-descriptionForeground, var(--primary-color));
+}
+
+.selection-bar-button.danger:hover {
+    background-color: color-mix(in srgb, var(--error-color) 16%, transparent);
+    color: var(--error-color);
+}
+
+.selection-bar-button:focus-visible {
+    outline: 1px solid var(--accent-color);
+    outline-offset: 1px;
+}
+
+/* Merged copy control: a split button (main "Copy" + caret) whose caret opens a
+   small menu offering the ICE and Markdown variants. */
+.selection-bar-copy {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+}
+
+.selection-bar-copy-main {
+    padding-right: 0.5em;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.selection-bar-copy-caret {
+    padding: 0.4em 0.4em;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    margin-left: 1px;
+}
+
+.selection-bar-copy-caret svg {
+    width: 0.75em;
+    height: 0.75em;
+}
+
+.selection-bar-copy.open .selection-bar-copy-caret {
+    background-color: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.selection-bar-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    min-width: 200px;
+    flex-direction: column;
+    padding: 4px;
+    background-color: var(--assistant-message-background-color);
+    border: 1px solid color-mix(in srgb, var(--assistant-message-background-color) 78%, var(--shadow-color));
+    border-radius: var(--border-radius-large);
+    box-shadow: 0 6px 20px color-mix(in srgb, var(--shadow-color) 60%, transparent);
+    z-index: 21;
+}
+
+.selection-bar-copy.open .selection-bar-menu {
+    display: flex;
+}
+
+.selection-bar-menu-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6em;
+    text-align: left;
+    border: none;
+    background-color: transparent;
+    color: var(--vscode-foreground, var(--primary-color));
+    font: inherit;
+    cursor: pointer;
+    padding: 0.5em 0.6em;
+    border-radius: var(--border-radius);
+    transition: background-color 0.12s var(--default-cubic-bezier);
+}
+
+.selection-bar-menu-item:hover {
+    background-color: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.selection-bar-menu-item:focus-visible {
+    outline: 1px solid var(--accent-color);
+    outline-offset: -1px;
+}
+
+.selection-bar-menu-item svg {
+    width: 1em;
+    height: 1em;
+    margin-top: 0.15em;
+    flex-shrink: 0;
+}
+
+.selection-bar-menu-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.3;
+}
+
+.selection-bar-menu-text small {
+    color: var(--vscode-descriptionForeground, var(--secondary-color));
+    font-size: 0.85em;
+}
+.ghost-message.bubble {
+    box-sizing: border-box;
+    margin-left: var(--padding);
+    margin-right: var(--padding);
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    opacity: 0;
+    animation: ghostFadeIn 0.25s var(--default-cubic-bezier) forwards;
+}
+
+.ghost-message.user {
+    justify-content: flex-end;
+}
+
+.ghost-bubble {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5em;
+    padding: 10px 16px;
+    max-width: 61.8vw;
+    box-sizing: border-box;
+    cursor: pointer;
+    color: var(--vscode-descriptionForeground, var(--primary-color));
+    border: 1.5px dashed color-mix(in srgb, var(--accent-color) 50%, var(--quaternary-color));
+    border-radius: var(--border-radius-xxlarge) var(--border-radius-xxlarge) var(--border-radius-xxlarge) var(--border-radius-large);
+    background-color: color-mix(in srgb, var(--accent-color) 5%, transparent);
+    transition: background-color 0.15s var(--default-cubic-bezier),
+                border-color 0.15s var(--default-cubic-bezier);
+}
+
+.ghost-message.user .ghost-bubble {
+    border-radius: var(--border-radius-xxlarge) var(--border-radius-xxlarge) var(--border-radius-large) var(--border-radius-xxlarge);
+}
+
+.ghost-bubble:hover {
+    background-color: color-mix(in srgb, var(--accent-color) 11%, transparent);
+    border-color: var(--accent-color);
+}
+
+.ghost-bubble:focus-visible {
+    outline: 1px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+.ghost-label {
+    font-size: var(--fs-footnote);
+    font-style: italic;
+}
+
+.ghost-actions {
+    display: flex;
+    flex-direction: row;
+    gap: 1em;
+}
+
+.ghost-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
+    font-size: var(--fs-footnote);
+    color: var(--accent-color);
+    opacity: 0.9;
+    cursor: pointer;
+}
+
+.ghost-action:hover {
+    opacity: 1;
+    text-decoration: underline;
+}
+
+.ghost-action svg {
+    width: 0.9em;
+    height: 0.9em;
+}
+
+@keyframes ghostFadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ghost-message.bubble {
+        animation: none;
+        opacity: 1;
+    }
+
+    .selection-check,
+    .selection-check svg,
+    #selection-bar {
+        transition: none;
     }
 }

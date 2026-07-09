@@ -46,8 +46,37 @@
       },
       {
         "command": "chat-view.message.copy",
+        "title": "Copy",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.copyMarkdown",
+        "title": "Copy as Markdown",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.copyPlainText",
         "title": "Copy Plain Text",
         "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.select",
+        "title": "Select / Deselect",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.selectToHere",
+        "title": "Select to Here",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.message.paste",
+        "title": "Paste After This Message",
+        "category": "Chat View Context"
+      },
+      {
+        "command": "chat-view.paste",
+        "title": "ICE: Paste Messages at End"
       },
       {
         "command": "chat-view.message.toggleEdit",
@@ -163,8 +192,33 @@
         },
         {
           "command": "chat-view.message.copy",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head'",
+          "group": "1_clipboard@1"
+        },
+        {
+          "command": "chat-view.message.copyMarkdown",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head'",
+          "group": "1_clipboard@2"
+        },
+        {
+          "command": "chat-view.message.copyPlainText",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head'",
+          "group": "1_clipboard@3"
+        },
+        {
+          "command": "chat-view.message.paste",
           "when": "webviewId == chat-view.editor && webviewSection == 'messageNode'",
-          "group": "message_operations"
+          "group": "1_clipboard@4"
+        },
+        {
+          "command": "chat-view.message.select",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head'",
+          "group": "2_selection@1"
+        },
+        {
+          "command": "chat-view.message.selectToHere",
+          "when": "webviewId == chat-view.editor && webviewSection == 'messageNode' && messageRole != '#head'",
+          "group": "2_selection@2"
         },
         {
           "command": "chat-view.message.toggleEdit",

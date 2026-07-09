@@ -94,7 +94,12 @@ export function activate(context: vscode.ExtensionContext) {
     { command: 'chat-view.message.resend', operation: 'resend' },
     { command: 'chat-view.message.insertConfigUpdate.before', operation: 'insertConfigUpdate', subOperation: 'before' },
     { command: 'chat-view.message.insertConfigUpdate.after', operation: 'insertConfigUpdate', subOperation: 'after' },
-    { command: 'chat-view.message.copy', operation: 'copy' },
+    { command: 'chat-view.message.copy', operation: 'copyRich' },
+    { command: 'chat-view.message.copyMarkdown', operation: 'copyMarkdown' },
+    { command: 'chat-view.message.copyPlainText', operation: 'copyPlainText' },
+    { command: 'chat-view.message.select', operation: 'toggleSelect' },
+    { command: 'chat-view.message.selectToHere', operation: 'selectToHere' },
+    { command: 'chat-view.message.paste', operation: 'paste' },
     { command: 'chat-view.message.attachment.reveal', operation: 'revealAttachment' },
     { command: 'chat-view.message.attachment.remove', operation: 'removeAttachment' },
     { command: 'chat-view.message.editor.createSnippet', operation: 'createSnippet' },
@@ -104,6 +109,12 @@ export function activate(context: vscode.ExtensionContext) {
       postMessageToCurrentWebview({ type: 'contextMenuOperation', operation, subOperation });
     }));
   }
+
+  // "Paste Messages" from the command palette inserts at the end of the
+  // conversation (the context-menu variant inserts after the clicked message).
+  context.subscriptions.push(vscode.commands.registerCommand('chat-view.paste', () => {
+    postMessageToCurrentWebview({ type: 'pasteAtEnd' });
+  }));
 
   // Deletion is confirmed with a lightweight inline prompt inside the webview
   // (and is undoable), so the command just forwards the operation.
@@ -405,6 +416,13 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
         case 'deleteMessage':
           await chatHistoryManager.deleteMessage(message.messageID);
           break;
+        case 'beginTransaction':
+          // Group the actions of a compound operation into a single undo step.
+          chatHistoryManager.beginTransaction();
+          break;
+        case 'endTransaction':
+          chatHistoryManager.endTransaction();
+          break;
         case 'selectProvider':
           let providerDisplay: Provider | undefined;
           if (message.providerID) {
@@ -430,7 +448,15 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           break;
         case 'setClipboard':
           await vscode.env.clipboard.writeText(message.text);
-          vscode.window.showInformationMessage('Copied to clipboard: ' + message.text.substr(0, 20) + (message.text.length > 20 ? '...' : ''));
+          if (message.label) {
+            vscode.window.showInformationMessage(message.label);
+          } else {
+            vscode.window.showInformationMessage('Copied to clipboard: ' + message.text.substr(0, 20) + (message.text.length > 20 ? '...' : ''));
+          }
+          break;
+        case 'readClipboard':
+          const clipboardText = await vscode.env.clipboard.readText();
+          webviewPanel.webview.postMessage({ type: 'clipboardContent', requestID: message.requestID, text: clipboardText });
           break;
         case 'error':
           vscode.window.showErrorMessage(message.error);
@@ -444,9 +470,9 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           }
           break;
         case 'redo':
-          const newActionRedo = await chatHistoryManager.redo();
-          if (newActionRedo) {
-            webviewPanel.webview.postMessage({ type: 'appendAction', actions: [newActionRedo] });
+          const redoneActions = await chatHistoryManager.redo();
+          if (redoneActions) {
+            webviewPanel.webview.postMessage({ type: 'appendAction', actions: redoneActions });
           } else {
             console.log('No actions to redo');
           }
