@@ -1576,6 +1576,80 @@ function handleUpdateMessage(message, incomplete = false) {
 
 
 /**
+ * Shows a lightweight inline delete confirmation. The message content stays
+ * visible (recognition over recall — the user can still see what they are about
+ * to delete); a short prompt with Delete / Cancel actions is appended beneath
+ * it. Cancelling just removes the prompt, and deletion is undoable, so the
+ * confirmation stays deliberately light.
+ * @param {string} messageID - The ID of the message to confirm deletion for.
+ */
+function showDeleteConfirmation(messageID) {
+  const container = document.querySelector(
+    `.message-container[data-id="${messageID}"]`
+  );
+  if (!container) {
+    return;
+  }
+  const nodesContainer = container.querySelector(".message-nodes-container");
+  const node = nodesContainer && nodesContainer.firstElementChild;
+  if (!node) {
+    return;
+  }
+  // Append inside the bubble content, or the config node itself.
+  const surface = node.classList.contains("message-node") ?
+    node.querySelector(".message-content") : node;
+  if (!surface) {
+    return;
+  }
+  // Don't stack a second confirmation if one is already showing.
+  if (surface.querySelector(":scope > .delete-confirmation")) {
+    return;
+  }
+
+  const confirmation = document.createElement("div");
+  confirmation.className = "delete-confirmation";
+
+  const label = document.createElement("span");
+  label.className = "delete-confirmation-label";
+  label.textContent = "Delete this message?";
+  confirmation.appendChild(label);
+
+  const actions = document.createElement("div");
+  actions.className = "delete-confirmation-actions";
+
+  const confirmButton = document.createElement("button");
+  confirmButton.className = "delete-confirmation-button confirm";
+  confirmButton.textContent = "Delete";
+  confirmButton.addEventListener("click", function () {
+    deleteMessage(messageID);
+  });
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "delete-confirmation-button cancel";
+  cancelButton.textContent = "Cancel";
+  cancelButton.addEventListener("click", function () {
+    confirmation.remove();
+  });
+
+  actions.appendChild(confirmButton);
+  actions.appendChild(cancelButton);
+  confirmation.appendChild(actions);
+
+  // Keep the original message visible and append the prompt beneath it.
+  surface.appendChild(confirmation);
+
+  // The prompt can sit below the fold on a long message — bring it into view
+  // (and the entrance animation draws the eye) so the user notices it appear.
+  const reduceMotion = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  confirmation.scrollIntoView({
+    block: "nearest",
+    behavior: reduceMotion ? "auto" : "smooth",
+  });
+}
+
+
+/**
  * Deletes a message from the conversation.
  * @param {string} messageID - The ID of the message to delete.
  */
@@ -1718,16 +1792,7 @@ function contextMenuOperation(operation, subOperation) {
       addMessage(newMessage);
       break;
     case "delete":
-      vscode.postMessage({
-        type: "confirmAction",
-        message: `Are you sure to delete this message? (${flatMessages[
-          messageID
-        ].content.substring(0, 20)}...)`,
-        onConfirm: {
-          type: "deleteMessage",
-          messageID: messageID,
-        },
-      });
+      showDeleteConfirmation(messageID);
       break;
     case "toggleEdit":
       toggleEdit(messageID);

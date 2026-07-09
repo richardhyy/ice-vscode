@@ -105,12 +105,10 @@ export function activate(context: vscode.ExtensionContext) {
     }));
   }
 
-  // Deleting a message requires an explicit confirmation before forwarding the operation.
-  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.delete', async () => {
-    const choice = await vscode.window.showQuickPick(['Yes', 'No'], { placeHolder: 'Are you sure you want to delete this message?' });
-    if (choice === 'Yes') {
-      postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'delete' });
-    }
+  // Deletion is confirmed with a lightweight inline prompt inside the webview
+  // (and is undoable), so the command just forwards the operation.
+  context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.delete', () => {
+    postMessageToCurrentWebview({ type: 'contextMenuOperation', operation: 'delete' });
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.message.editor.manageSnippets', async () => {
@@ -429,13 +427,6 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
               this.showProviderPicker(true);
             }
           }
-          break;
-        case 'confirmAction':
-          vscode.window.showQuickPick(['Yes', 'No'], { placeHolder: message.message }).then((value) => {
-            if (value === 'Yes') {
-              webviewPanel.webview.postMessage(message.onConfirm);
-            }
-          });
           break;
         case 'setClipboard':
           await vscode.env.clipboard.writeText(message.text);
