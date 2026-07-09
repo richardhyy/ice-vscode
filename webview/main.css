@@ -537,6 +537,57 @@ hr {
     transform-origin: top right;
 }
 
+/* --- Branch hover preview -------------------------------------------------
+   When the Branches strip is expanded, hovering a version previews that
+   branch's continuation (its descendant sub-tree) as an overlay laid exactly
+   over the current downstream region. The real messages stay in flow (just
+   faded) so they hold the box open -> swapping versions never changes the
+   page height and the viewport stays put. */
+.branch-preview-layer {
+    position: absolute;
+    left: 0;
+    right: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--padding);
+    overflow: hidden;
+    pointer-events: none;
+    opacity: 0;
+    z-index: 3;
+    transition: opacity 0.2s var(--default-cubic-bezier);
+}
+
+.branch-preview-layer.visible {
+    opacity: 1;
+}
+
+/* Taller branches are clipped to the reserved box; the fade hints "more below". */
+.branch-preview-layer.clipped {
+    -webkit-mask-image: linear-gradient(to bottom, #000 78%, transparent 100%);
+            mask-image: linear-gradient(to bottom, #000 78%, transparent 100%);
+}
+
+/* The preview is a passive snapshot: silence per-message affordances. */
+.branch-preview-layer .sibling-switcher,
+.branch-preview-layer .selection-check,
+.branch-preview-layer .operation-bar {
+    display: none !important;
+}
+
+/* The real downstream messages fade out but keep their space (hold the box).
+   Needs to out-rank `.message-container.static { opacity: 1 !important }`. */
+.message-container.branch-preview-source-hidden {
+    opacity: 0 !important;
+    transition: opacity 0.2s var(--default-cubic-bezier);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .branch-preview-layer,
+    .message-container.branch-preview-source-hidden {
+        transition: none;
+    }
+}
+
 .message-node {
     display: flex;
     flex-direction: row;

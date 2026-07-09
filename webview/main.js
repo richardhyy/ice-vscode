@@ -1257,13 +1257,170 @@ function renderSiblingMessagesOf(message) {
             renderConversation();
             shadowSiblingMessageContainer.remove();
           };
+          // Hovering a version previews that branch's continuation (its
+          // descendant sub-tree) in place of the current downstream messages,
+          // without shifting the page. See _showBranchPreview.
+          siblingMessageNode.addEventListener("pointerenter", () => {
+            _showBranchPreview(message, siblingID);
+          });
           shadowSiblingMessageContainer.appendChild(siblingMessageNode);
         }
       }
+      // Leaving the strip entirely ends the preview; moving between versions
+      // (staying inside the strip) keeps it up.
+      shadowSiblingMessageContainer.addEventListener("pointerleave", () => {
+        _scheduleBranchPreviewHide();
+      });
     }
   }
 
   return shadowSiblingMessageContainer;
+}
+
+
+// --- Branch hover preview --------------------------------------------------
+// When the Branches strip is expanded, hovering a sibling version previews that
+// branch's continuation (its descendant sub-tree) laid out exactly over the
+// current downstream region. The real messages stay in flow (just faded) so they
+// hold the box open -> swapping versions never changes the page height and the
+// viewport stays put. (Reuses the repo's "overlay-keeps-box" trick.)
+let _branchPreview = null; // { overlay, sources, branchPointID, hoveredID, hideTimer }
+
+function _branchPreviewMotionMs() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 200;
+}
+
+/** Real downstream message containers: the active path after the branch point. */
+function _downstreamContainersOf(branchPointID) {
+  const index = activePath.indexOf(branchPointID);
+  if (index === -1) {
+    return [];
+  }
+  const containers = [];
+  for (const id of activePath.slice(index + 1)) {
+    const node = conversationContainer.querySelector(
+      `.message-container[data-id="${id}"]`
+    );
+    if (node) {
+      containers.push(node);
+    }
+  }
+  return containers;
+}
+
+/** Fills the overlay with the hovered version's descendant sub-tree. */
+function _fillBranchPreview(overlay, hoveredSiblingID) {
+  overlay.innerHTML = "";
+  const path = getPathWithMessage(hoveredSiblingID);
+  const startIndex = path.indexOf(hoveredSiblingID) + 1;
+  for (const id of path.slice(startIndex)) {
+    const previewMessage = flatMessages[id];
+    if (previewMessage) {
+      overlay.appendChild(createMessageContainer(previewMessage, false, false));
+    }
+  }
+  // Mask the bottom when the branch is taller than the reserved box.
+  overlay.classList.toggle("clipped", overlay.scrollHeight > overlay.clientHeight + 1);
+}
+
+/** Gracefully fades the preview back to the current branch (used on strip exit). */
+function _scheduleBranchPreviewHide() {
+  if (!_branchPreview) {
+    return;
+  }
+  if (_branchPreview.hideTimer) {
+    clearTimeout(_branchPreview.hideTimer);
+  }
+  _branchPreview.overlay.classList.remove("visible");
+  _branchPreview.sources.forEach((n) => n.classList.remove("branch-preview-source-hidden"));
+  _branchPreview.hideTimer = setTimeout(
+    () => _teardownBranchPreview(),
+    _branchPreviewMotionMs()
+  );
+}
+
+/** Immediately removes any preview overlay and restores the real messages. */
+function _teardownBranchPreview() {
+  if (!_branchPreview) {
+    return;
+  }
+  const { overlay, sources, hideTimer } = _branchPreview;
+  if (hideTimer) {
+    clearTimeout(hideTimer);
+  }
+  sources.forEach((n) => n.classList.remove("branch-preview-source-hidden"));
+  if (overlay && overlay.parentNode) {
+    overlay.parentNode.removeChild(overlay);
+  }
+  _branchPreview = null;
+}
+
+function _showBranchPreview(branchPointMessage, hoveredSiblingID) {
+  const branchPointID = branchPointMessage.id;
+
+  // Re-hovering the version already shown: just cancel any pending fade-out.
+  if (
+    _branchPreview &&
+    _branchPreview.branchPointID === branchPointID &&
+    _branchPreview.hoveredID === hoveredSiblingID
+  ) {
+    if (_branchPreview.hideTimer) {
+      clearTimeout(_branchPreview.hideTimer);
+      _branchPreview.hideTimer = null;
+    }
+    return;
+  }
+
+  // Switching versions within the same strip: swap content in the same box so
+  // the reserved region (and thus the page height) never changes.
+  if (_branchPreview && _branchPreview.branchPointID === branchPointID) {
+    if (_branchPreview.hideTimer) {
+      clearTimeout(_branchPreview.hideTimer);
+      _branchPreview.hideTimer = null;
+    }
+    _branchPreview.hoveredID = hoveredSiblingID;
+    _fillBranchPreview(_branchPreview.overlay, hoveredSiblingID);
+    _branchPreview.overlay.classList.add("visible");
+    _branchPreview.sources.forEach((n) => n.classList.add("branch-preview-source-hidden"));
+    return;
+  }
+
+  // Fresh preview for a different branch point.
+  _teardownBranchPreview();
+
+  const sources = _downstreamContainersOf(branchPointID);
+  if (sources.length === 0) {
+    // No downstream region to reserve -> previewing would move the page, so skip.
+    return;
+  }
+
+  const containerRect = conversationContainer.getBoundingClientRect();
+  const firstRect = sources[0].getBoundingClientRect();
+  const lastRect = sources[sources.length - 1].getBoundingClientRect();
+
+  const overlay = document.createElement("div");
+  overlay.className = "branch-preview-layer";
+  overlay.style.top = `${firstRect.top - containerRect.top}px`;
+  overlay.style.height = `${lastRect.bottom - firstRect.top}px`;
+  conversationContainer.appendChild(overlay);
+
+  _fillBranchPreview(overlay, hoveredSiblingID);
+  sources.forEach((n) => n.classList.add("branch-preview-source-hidden"));
+
+  _branchPreview = {
+    overlay,
+    sources,
+    branchPointID,
+    hoveredID: hoveredSiblingID,
+    hideTimer: null,
+  };
+
+  // Fade in on the next frame so the opacity transition actually runs.
+  requestAnimationFrame(() => {
+    if (_branchPreview && _branchPreview.overlay === overlay) {
+      overlay.classList.add("visible");
+    }
+  });
 }
 
 
@@ -1360,6 +1517,7 @@ function createMessageContainer(message, editing = false, shouldAnimate = false)
             shadowSiblingMessageContainer
           );
         } else {
+          _teardownBranchPreview();
           siblingSwitcher.classList.remove("active");
           siblingSwitcher.classList.add("inactive");
           siblingSwitcher.textContent = "Branches";
@@ -1442,6 +1600,7 @@ function _updateRulerMarks() {
  * @param {boolean} shouldAnimateLastMessage - Whether to animate the last message when rendering.
  */
 function renderConversation(shouldAnimateLastMessage = false) {
+  _teardownBranchPreview();
   conversationContainer.innerHTML = "";
   // Render messages in the active path
   activePath.forEach((messageID) => {
