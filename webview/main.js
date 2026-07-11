@@ -532,6 +532,37 @@ function _createTypingIndicator() {
   return indicator;
 }
 
+/**
+ * Builds the inline error notice shown on a failed assistant reply. The provider
+ * error is recorded on the message (and persisted to the .chat file), so it stays
+ * visible in the conversation instead of only flashing in a notification. Kept
+ * quiet but unambiguous: a small octagon glyph plus the reason in the theme's
+ * error colour, shown inline in the bubble (no nested card). A faint top divider
+ * is added only when answer content streamed before the failure.
+ * @param {string} text - The error message to display.
+ * @param {boolean} [withDivider=false] - Whether to set the notice off from
+ *   preceding answer content with a divider.
+ * @returns {HTMLElement} The error notice element.
+ */
+function _createMessageErrorBlock(text, withDivider = false) {
+  const block = document.createElement("div");
+  block.className = withDivider ? "message-error with-divider" : "message-error";
+  block.setAttribute("role", "alert");
+
+  const icon = document.createElement("span");
+  icon.className = "message-error-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = icons.ICON_EXCLAMATION_OCTAGON;
+  block.appendChild(icon);
+
+  const label = document.createElement("span");
+  label.className = "message-error-text";
+  label.textContent = text;
+  block.appendChild(label);
+
+  return block;
+}
+
 
 /**
  * Encodes a configuration object to a string format.
@@ -1423,16 +1454,22 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
     // While waiting for the first answer token (and not already showing the
     // reasoning "Thinking\u2026" state), show an animated typing indicator rather
     // than a static placeholder — the familiar "composing a reply" metaphor.
+    // A recorded provider error (persisted on the message) is shown as its own
+    // notice below, so it takes the place of the "(empty)" placeholder.
+    const providerError =
+      message.customFields && message.customFields.metadata && message.customFields.metadata.error;
+    const hasError = typeof providerError === "string" && providerError.trim().length > 0;
+
     const isTypingPlaceholder =
       message.content.length === 0 && message.incomplete && !hasReasoningBlock;
     let answerText = message.content;
     if (message.content.length === 0) {
-      answerText = message.incomplete ? "" : "(empty)";
+      answerText = message.incomplete || hasError ? "" : "(empty)";
     }
     let renderedContent = _renderMarkdown(answerText);
     const markdownContent = document.createElement("div");
     markdownContent.classList.add("markdown-content");
-    if (message.content.length === 0) {
+    if (message.content.length === 0 && !hasError) {
       markdownContent.classList.add(isTypingPlaceholder ? "typing" : "empty");
     }
     messageContent.appendChild(markdownContent);
@@ -1446,6 +1483,14 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
       if (isTypingPlaceholder) {
         markdownContent.appendChild(_createTypingIndicator());
       }
+    }
+
+    if (hasError && !clipContent) {
+      // Divider only when an answer streamed before the failure, to set the
+      // notice off from that content; an error-only reply needs none.
+      messageContent.appendChild(
+        _createMessageErrorBlock(providerError, message.content.length > 0)
+      );
     }
 
     if (!message.incomplete) {

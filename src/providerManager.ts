@@ -52,6 +52,8 @@ export interface ProviderCompletionMeta {
   model?: string;
   usage?: ProviderUsage;
   extra?: Record<string, any>;
+  /** Present when the request failed; recorded on the reply so the error persists. */
+  error?: string;
 }
 
 export interface Provider {
@@ -398,7 +400,10 @@ export class ProviderManager {
         const { requestID, error } = message;
         const request = this.pendingRequests.get(requestID);
         if (request) {
-          request.onCompletion('');
+          // Surface the failure both ways: a transient notification *and* on the
+          // reply itself (via the completion meta) so it is recorded in the chat
+          // history instead of vanishing with the toast.
+          request.onCompletion('', { error });
           this.pendingRequests.delete(requestID);
           vscode.window.showErrorMessage(`Provider ${providerID} Error: ${error}`);
         }

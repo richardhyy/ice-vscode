@@ -749,6 +749,55 @@ hr {
 }
 
 /*
+ * A failed reply records its provider error on the message (persisted to the
+ * .chat file), shown here as a quiet inline notice inside the bubble: a small
+ * octagon glyph and the reason in the theme's error colour — no nested card, so
+ * it doesn't box-in-a-box against the bubble. Distinct enough (icon + colour) not
+ * to be mistaken for model output, calm enough not to alarm.
+ */
+.message-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.45em;
+    margin-top: 0.15em;
+    color: var(--error-color);
+    font-size: 0.9em;
+    line-height: 1.45;
+}
+
+/*
+ * When an answer streamed before the failure, set the notice off from it with a
+ * faint divider; on an error-only reply the bubble padding already frames it, so
+ * no extra chrome is needed.
+ */
+.message-error.with-divider {
+    margin-top: 0.55em;
+    padding-top: 0.5em;
+    border-top: 1px solid color-mix(in srgb, var(--error-color) 22%, transparent);
+}
+
+.message-error-icon {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    /* Match one line of text so the glyph centres on the first line (whether the
+       message is one line or wraps), rather than floating above it. */
+    height: 1.45em;
+}
+
+.message-error-icon svg {
+    width: 0.95em;
+    height: 0.95em;
+    display: block;
+}
+
+.message-error-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-width: 0;
+}
+
+/*
  * New answer blocks gently fade in as they arrive — a quiet cue that a fresh
  * chunk of the reply has landed. Disabled under prefers-reduced-motion.
  */

@@ -402,24 +402,32 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
                   webviewPanel.webview.postMessage({ type: 'progress', text: 'Text Completion in Progress', cancelableRequestID: requestID });
                 },
                 async (finalText: string, meta?: ProviderCompletionMeta) => {
-                  // Streaming completed
-                  // Save the final message
-                  if (finalText && finalText.trim()) {
+                  // Streaming completed. Fold in whatever the provider optionally
+                  // reported (real model, token usage, any extra metadata) over the
+                  // earlier best-effort snapshot.
+                  newMessage.customFields = newMessage.customFields || {};
+                  const metadata = (newMessage.customFields.metadata = newMessage.customFields.metadata || {});
+                  if (meta?.extra && typeof meta.extra === 'object') {
+                    Object.assign(metadata, meta.extra);
+                  }
+                  if (meta?.model) {
+                    metadata.model = meta.model;
+                  }
+                  if (meta?.usage) {
+                    metadata.usage = meta.usage;
+                  }
+
+                  if (meta?.error) {
+                    // Record the failure on the reply itself so it is visible in the
+                    // conversation and persisted to the .chat file, not just shown in
+                    // a transient notification. Any partial content that streamed
+                    // before the error is kept as-is, so the error is never mistaken
+                    // for model output.
+                    metadata.error = meta.error;
+                    await chatHistoryManager.addMessage(newMessage);
+                    webviewPanel.webview.postMessage({ type: 'updateMessage', message: newMessage });
+                  } else if (finalText && finalText.trim()) {
                     newMessage.content = finalText;
-                    // Fold in whatever the provider optionally reported (real
-                    // model, token usage, and any extra provider metadata) over
-                    // the earlier best-effort snapshot.
-                    newMessage.customFields = newMessage.customFields || {};
-                    const metadata = (newMessage.customFields.metadata = newMessage.customFields.metadata || {});
-                    if (meta?.extra && typeof meta.extra === 'object') {
-                      Object.assign(metadata, meta.extra);
-                    }
-                    if (meta?.model) {
-                      metadata.model = meta.model;
-                    }
-                    if (meta?.usage) {
-                      metadata.usage = meta.usage;
-                    }
                     await chatHistoryManager.addMessage(newMessage);
                     webviewPanel.webview.postMessage({ type: 'updateMessage', message: newMessage });
                   }
