@@ -4,11 +4,10 @@ ICE supports multiple LLM providers out of the box, giving you flexibility in ch
 
 ## Built-in Providers
 
-- OpenAI (GPT models, e.g. GPT-3.5, GPT-4)
-- Anthropic (Claude models, e.g. Claude-3 series, Claude-3.5-Sonnet)
-- Google (Gemini models)
-- ZHIPU AI (GLM models)
-- Poe (Various models)
+- OpenAI (GPT models, e.g. GPT-4o, GPT-4o mini)
+- Anthropic (Claude models, e.g. Claude Sonnet 4.5, Claude Opus 4.1)
+- Google (Gemini models, e.g. Gemini 2.5 Flash, Gemini 2.5 Pro)
+- Poe (hundreds of models and bots through a single key)
 
 ## Using Providers
 

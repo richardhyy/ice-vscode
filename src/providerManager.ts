@@ -107,7 +107,6 @@ export class ProviderManager {
     'Claude.js',
     'Gemini.js',
     'Poe.js',
-    'Zhipu.js',
   ];
   private providers: {
     [key: string]:

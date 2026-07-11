@@ -33,7 +33,6 @@ ICE (Integrated Conversational Environment) is a flexible, easy-to-use VSCode ex
   - OpenAI
   - Anthropic
   - Google
-  - ZHIPU AI
   - Poe
 - Persist chat histories as `.chat` files (YAML format) 
   - Easily manage and share conversations

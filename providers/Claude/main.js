@@ -1,7 +1,7 @@
 // ==ICEProvider==
 // @name                Anthropic Claude
-// @version             1.1
-// @description         ICE provider for Claude by Anthropic. System prompt is supported by Claude 2.1 (or later). Docs: https://docs.anthropic.com/claude/docs. This script is not affiliated with Anthropic.
+// @version             1.2
+// @description         ICE provider for Claude by Anthropic, using the Messages API. Docs: https://platform.claude.com/docs. This script is not affiliated with Anthropic.
 // @author              Alan Richard
 // @license             MIT
 // @_needAttachmentPreprocessing  false
@@ -9,11 +9,13 @@
 // @variableSecure      APIKey
 // @variableRequired    APIHost=api.anthropic.com
 // @variableRequired    APIPath=/v1/messages
-// @variableRequired    Model=claude-3-opus-20240229
+// @variableRequired    Model=claude-sonnet-4-5
 // @variableRequired    MaxTokensToSample=4000
 // @variableRequired    SystemPrompt=You are a helpful assistant. Current date: {{ DATE_TODAY }}
 // @variableOptional    Temperature=0.5
-// @variableOptional    LogitBias={}
+// @variableOptional    AdditionalHeaders={}
+// @variableSuggest     Model=claude-sonnet-4-5,claude-opus-4-1,claude-haiku-4-5,claude-3-5-haiku-latest
+// @quickOption         Model
 // ==/ICEProvider==
 
 const https = require('https');
@@ -25,6 +27,45 @@ function debug(message) {
     type: 'debug',
     content: message
   });
+}
+
+/**
+ * Pulls a human-readable message out of a parsed Anthropic error payload, which
+ * is shaped like { type: "error", error: { type, message } }. Also tolerates
+ * { error: "..." } and { message } for robustness. Returns '' when none present.
+ */
+function pluckErrorMessage(parsed) {
+  if (!parsed || typeof parsed !== 'object') {
+    return typeof parsed === 'string' ? parsed : '';
+  }
+  if (parsed.error && typeof parsed.error.message === 'string') {
+    return parsed.error.message;
+  }
+  if (typeof parsed.error === 'string') {
+    return parsed.error;
+  }
+  if (typeof parsed.message === 'string') {
+    return parsed.message;
+  }
+  return '';
+}
+
+/**
+ * Turns a non-2xx HTTP response body into a readable error string. The body is
+ * normally a JSON error object; falls back to the raw body (clamped) or just the
+ * status when nothing parses, so the failure is never swallowed.
+ */
+function extractErrorMessage(body, statusCode) {
+  const prefix = `Request failed (HTTP ${statusCode})`;
+  const raw = (body || '').trim();
+  let message = '';
+  try {
+    message = pluckErrorMessage(JSON.parse(raw));
+  } catch (e) {
+    message = raw.length > 500 ? `${raw.slice(0, 500)}…` : raw;
+  }
+  message = (message || '').trim();
+  return message ? `${prefix}: ${message}` : prefix;
 }
 
 let requests = {};
@@ -140,6 +181,23 @@ process.on('message', (message) => {
     let capturedInputTokens = null;
     let capturedOutputTokens = null;
 
+    // A request produces exactly one terminal outcome. `settled` guards against a
+    // late completion overwriting a reported error (or a double `done` from the
+    // response `end` and request `close` both firing).
+    let settled = false;
+
+    function reportError(errorMessage) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      process.send({
+        type: 'error',
+        requestID: requestID,
+        error: errorMessage,
+      });
+    }
+
     function handleEvent(event, data) {
       debug(`Received event: ${event}\n`);
       debug(`Received event data: ${JSON.stringify(data)}\n`);
@@ -172,11 +230,7 @@ process.on('message', (message) => {
           capturedOutputTokens = data.usage.output_tokens;
         }
       } else if (event === 'error') {
-        process.send({
-          type: 'error',
-          requestID: requestID,
-          error: data.error.message
-        });
+        reportError((data.error && data.error.message) || 'Provider returned an error');
       }
 
       return null;
@@ -186,6 +240,10 @@ process.on('message', (message) => {
 
     // Emits the completion with the optional model + normalized token usage.
     function sendDone() {
+      if (settled) {
+        return;
+      }
+      settled = true;
       const hasUsage = capturedInputTokens != null || capturedOutputTokens != null;
       const usage = hasUsage
         ? {
@@ -209,11 +267,21 @@ process.on('message', (message) => {
       debug(`Response status code: ${res.statusCode}\n`);
       debug(`Response headers: ${JSON.stringify(res.headers)}\n`);
 
+      // A non-2xx response is a plain JSON error body, not an SSE stream. The SSE
+      // parser below only understands `event:`/`data:` lines, so without this
+      // branch the error would be silently dropped and the reply "completes" empty.
+      const isErrorResponse = res.statusCode < 200 || res.statusCode >= 300;
+
       let responseData = '';
+      let errorBody = '';
 
       res.on('data', (chunk) => {
-        responseData += chunk;
         debug(`Received data: ${chunk}\n`);
+        if (isErrorResponse) {
+          errorBody += chunk;
+          return;
+        }
+        responseData += chunk;
 
         const lines = responseData.split('\n');
         let event = null;
@@ -221,22 +289,6 @@ process.on('message', (message) => {
         let jsonBlob = '';
 
         for (const line of lines) {
-          try {
-            if (line.startsWith('{"')) {
-              // Sample: {"type":"error","error":{"type":"invalid_request_error","message":"'claude-2.1' does not support image input."}}
-              data = JSON.parse(line);          
-              if (data.error) {
-                process.send({
-                  type: 'error',
-                  requestID: requestID,
-                  error: data.error.message
-                });
-              }
-            }
-          } catch (error) {
-            // Ignore the error
-          }
-
           if (line.startsWith('event: ')) {
             if (event !== null && data !== null) {
               responseData = '';
@@ -275,7 +327,11 @@ process.on('message', (message) => {
 
       res.on('end', () => {
         debug('Response ended\n');
-        sendDone();
+        if (isErrorResponse) {
+          reportError(extractErrorMessage(errorBody, res.statusCode));
+        } else {
+          sendDone();
+        }
 
         if (requests[requestID]) {
           delete requests[requestID];
@@ -287,11 +343,7 @@ process.on('message', (message) => {
 
     req.on('error', (error) => {
       debug(`Request error: ${error.message}\n`);
-      process.send({
-        type: 'error',
-        requestID: requestID,
-        error: error.message
-      });
+      reportError(error.message);
       if (requests[requestID]) {
         delete requests[requestID];
       }
