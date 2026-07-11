@@ -279,6 +279,27 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({ object: 'error', error: { message: 'Invalid JSON body' } }));
         return;
       }
+      // A model of `mock-http-error` (optionally with a status suffix, e.g.
+      // `mock-http-error-401`) returns a non-2xx JSON error body instead of an SSE
+      // stream, so providers' HTTP-error handling can be exercised.
+      const httpErrorMatch = /^mock[-_]?http[-_]?error(?:[-_](\d{3}))?$/i.exec(body.model || '');
+      if (httpErrorMatch) {
+        const statusCode = httpErrorMatch[1] ? parseInt(httpErrorMatch[1], 10) : 400;
+        process.stderr.write(`[mock] returning HTTP ${statusCode} error for model=${body.model}\n`);
+        res.writeHead(statusCode, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(
+          JSON.stringify({
+            error: {
+              message: 'The requested model is not supported.',
+              code: 'model_not_supported',
+              param: 'model',
+              type: 'invalid_request_error',
+            },
+          })
+        );
+        return;
+      }
+
       process.stderr.write(`[mock] completion model=${body.model || '(default)'}\n`);
       streamCompletion(req, res, body);
     });

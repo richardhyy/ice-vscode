@@ -117,6 +117,55 @@ function buildHeaders(config, base) {
 }
 
 /**
+ * Pulls a human-readable message out of a parsed OpenAI-style error payload,
+ * tolerating the common shapes: { error: { message } }, { error: "..." } and
+ * { message }. Returns '' when none is present.
+ */
+function pluckErrorMessage(parsed) {
+  if (!parsed || typeof parsed !== 'object') {
+    return typeof parsed === 'string' ? parsed : '';
+  }
+  if (typeof parsed.error === 'string') {
+    return parsed.error;
+  }
+  if (parsed.error && typeof parsed.error.message === 'string') {
+    return parsed.error.message;
+  }
+  if (typeof parsed.message === 'string') {
+    return parsed.message;
+  }
+  return '';
+}
+
+/**
+ * Turns a non-2xx HTTP response body into a readable error string. The body is
+ * normally a JSON error object, but some gateways double-encode the upstream
+ * error inside `error.message`, so a message that itself looks like JSON is
+ * unwrapped one extra level. Falls back to the raw body (clamped) or just the
+ * status when nothing parses, so the failure is never swallowed.
+ */
+function extractErrorMessage(body, statusCode) {
+  const prefix = `Request failed (HTTP ${statusCode})`;
+  const raw = (body || '').trim();
+  let message = '';
+  try {
+    message = pluckErrorMessage(JSON.parse(raw));
+    const inner = message.trim();
+    if (inner.startsWith('{') || inner.startsWith('[')) {
+      try {
+        message = pluckErrorMessage(JSON.parse(inner)) || message;
+      } catch (e) {
+        // Not actually nested JSON — keep the outer message.
+      }
+    }
+  } catch (e) {
+    message = raw.length > 500 ? `${raw.slice(0, 500)}…` : raw;
+  }
+  message = (message || '').trim();
+  return message ? `${prefix}: ${message}` : prefix;
+}
+
+/**
  * Lists the models the configured endpoint advertises (GET /v1/models) and
  * reports them back to ICE as selectable options. Only the `Model` variable is
  * dynamic; anything else resolves to an empty list so the UI keeps its static
@@ -286,6 +335,23 @@ process.on('message', (message) => {
     let capturedModel = null;
     let capturedUsage = null;
 
+    // A request produces exactly one terminal outcome. `settled` guards against a
+    // late completion overwriting a reported error (or a double `done` from the
+    // response `end` and request `close` both firing).
+    let settled = false;
+
+    function reportError(errorMessage) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      process.send({
+        type: 'error',
+        requestID: requestID,
+        error: errorMessage,
+      });
+    }
+
     function handleEvent(data) {
       debug(`Received event data: ${JSON.stringify(data)}\n`);
 
@@ -299,11 +365,7 @@ process.on('message', (message) => {
       }
 
       if (data.object === 'error') {
-        process.send({
-          type: 'error',
-          requestID: requestID,
-          error: data.error.message
-        });
+        reportError((data.error && data.error.message) || 'Provider returned an error');
       } else if (data.choices) {
         if (data.choices.length === 0) {
           // A trailing usage-only chunk has empty choices — that's expected, not
@@ -312,10 +374,7 @@ process.on('message', (message) => {
             return null;
           }
           debug('No response\n');
-          process.send({
-            type: 'error',
-            error: 'No response'
-          });
+          reportError('No response');
         } else {
           const delta = data.choices[0].delta || {};
           // Reasoning/thinking is delivered under different keys depending on the
@@ -338,11 +397,7 @@ process.on('message', (message) => {
         }
       } else {
         debug(`Unsupported object: ${data.object}\n`);
-        process.send({
-          type: 'error',
-          requestID: requestID,
-          error: `Unsupported object: ${data.object}`
-        });
+        reportError(`Unsupported object: ${data.object}`);
       }
 
       return null;
@@ -353,6 +408,10 @@ process.on('message', (message) => {
     // Emits the completion, attaching the resolved model + normalized token usage
     // when the backend reported them (both optional).
     function sendDone() {
+      if (settled) {
+        return;
+      }
+      settled = true;
       const usage = capturedUsage
         ? {
             promptTokens: capturedUsage.prompt_tokens,
@@ -373,7 +432,14 @@ process.on('message', (message) => {
       debug(`Response status code: ${res.statusCode}\n`);
       debug(`Response headers: ${JSON.stringify(res.headers)}\n`);
 
+      // A non-2xx response is a plain JSON error body, not an SSE stream. The SSE
+      // parser below only understands `data:` lines, so without this branch the
+      // error is silently dropped and the reply "completes" empty. Buffer the whole
+      // body and surface it as an error instead.
+      const isErrorResponse = res.statusCode < 200 || res.statusCode >= 300;
+
       let responseData = '';
+      let errorBody = '';
 
       function onData(line) {
         if (line.startsWith('data: ')) {
@@ -389,8 +455,12 @@ process.on('message', (message) => {
       }
 
       res.on('data', (chunk) => {
-        responseData += chunk;
         debug(`Received data: ${chunk}\n`);
+        if (isErrorResponse) {
+          errorBody += chunk;
+          return;
+        }
+        responseData += chunk;
         const lines = responseData.split('\n');
         responseData = lines.pop();
         for (const line of lines) {
@@ -399,10 +469,14 @@ process.on('message', (message) => {
       });
 
       res.on('end', () => {
+        debug('Response ended\n');
+        if (isErrorResponse) {
+          reportError(extractErrorMessage(errorBody, res.statusCode));
+          return;
+        }
         if (responseData) {
           onData(responseData);
         }
-        debug('Response ended\n');
         sendDone();
       });
     });
@@ -411,11 +485,7 @@ process.on('message', (message) => {
 
     req.on('error', (error) => {
       debug(`Request error: ${error.message}\n`);
-      process.send({
-        type: 'error',
-        requestID: requestID,
-        error: error.message
-      });
+      reportError(error.message);
     });
 
     req.on('close', () => {
