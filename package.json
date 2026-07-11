@@ -295,16 +295,47 @@
         "ice.mcpServers": {
           "type": "object",
           "default": {},
-          "markdownDescription": "MCP servers ICE can use for tool calls. Each key is a server name. Reference secrets with `${env:VAR}` rather than pasting them in plaintext.\n\nExample:\n```json\n{\n  \"filesystem\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"${env:HOME}/projects\"] },\n  \"remote\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\", \"headers\": { \"Authorization\": \"Bearer ${env:MCP_TOKEN}\" } }\n}\n```",
+          "markdownDescription": "MCP servers ICE can use for tool calls. Each key is a server name. Reference secrets with `${env:VAR}` rather than pasting them in plaintext. For `npx` servers, pin an exact version (e.g. `package@1.2.3`) — a floating `latest` lets a new (possibly compromised) release run unreviewed code on your machine.\n\nExample:\n```json\n{\n  \"filesystem\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem@2026.7.10\", \"${env:HOME}/projects\"] },\n  \"remote\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\", \"headers\": { \"Authorization\": \"Bearer ${env:MCP_TOKEN}\" } }\n}\n```",
           "additionalProperties": {
             "type": "object",
             "properties": {
-              "type": { "type": "string", "enum": ["stdio", "http"], "description": "Transport kind. Inferred from command/url when omitted." },
-              "command": { "type": "string", "description": "stdio: executable to launch." },
-              "args": { "type": "array", "items": { "type": "string" }, "description": "stdio: arguments passed to the command." },
-              "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "stdio: extra environment variables." },
-              "url": { "type": "string", "description": "http: the server's Streamable HTTP endpoint." },
-              "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "http: extra request headers." }
+              "type": {
+                "type": "string",
+                "enum": [
+                  "stdio",
+                  "http"
+                ],
+                "description": "Transport kind. Inferred from command/url when omitted."
+              },
+              "command": {
+                "type": "string",
+                "description": "stdio: executable to launch."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "stdio: arguments passed to the command."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "stdio: extra environment variables."
+              },
+              "url": {
+                "type": "string",
+                "description": "http: the server's Streamable HTTP endpoint."
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "http: extra request headers."
+              }
             }
           }
         },
@@ -359,6 +390,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/js-yaml": "^4.0.9",
-    "isbinaryfile": "^5.0.2"
+    "isbinaryfile": "^5.0.2",
+    "turndown": "^7.2.4"
   }
 }

@@ -248,11 +248,14 @@ export function activate(context: vscode.ExtensionContext) {
       if (!folders || folders.length === 0) {
         return;
       }
-      serverConfig = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', folders[0].fsPath] };
+      // Pin an exact version rather than floating `latest`: `npx` would otherwise
+      // download and run whatever is newest at launch, so a compromised release
+      // could execute with the user's privileges. Users can bump it in settings.
+      serverConfig = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem@2026.7.10', folders[0].fsPath] };
     } else if (picked.key === 'memory') {
-      serverConfig = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory'] };
+      serverConfig = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory@2026.7.4'] };
     } else {
-      serverConfig = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-everything'] };
+      serverConfig = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-everything@2026.7.4'] };
     }
 
     // Merge into the user's servers under a unique name.
