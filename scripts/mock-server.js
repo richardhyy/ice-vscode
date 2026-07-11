@@ -15,7 +15,7 @@
  *
  * Point a provider at it, e.g. with the test harness:
  *   node scripts/test-provider.js \
- *     --host http://localhost:8788 --path /v1/chat/completions \
+ *     --base-url http://localhost:8788/v1 \
  *     --model mock-reasoning --api-key test
  *
  * The requested `model` selects a scenario (see SCENARIOS below); unknown models

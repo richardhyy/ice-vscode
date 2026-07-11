@@ -7,19 +7,19 @@
 // @_needAttachmentPreprocessing  false
 // @_attachmentFilter   { "Images": ["jpg", "jpeg", "png", "gif", "webp"], "Documents": ["txt", "md"], "Others": ["*"] }
 // @variableSecure      APIKey
-// @variableRequired    APIHost=api.openai.com
-// @variableRequired    APIPath=/v1/chat/completions
-// @variableRequired    Model=gpt-3.5-turbo
+// @variableRequired    Preset=OpenAI
+// @variableRequired    Model=gpt-4o-mini
 // @variableRequired    MaxTokensToSample=4000
 // @variableRequired    SystemPrompt=You are a helpful assistant. Current date: {{ DATE_TODAY }}
+// @variableOptional    BaseURL
 // @variableOptional    Temperature=0.7
 // @variableOptional    LogitBias={}
 // @variableOptional    AdditionalHeaders={}
 // @variableOptional    ReasoningEffort
 // @variableDynamic     Model
+// @variableSuggest     Preset=OpenAI,Ollama,LM Studio,OpenRouter,Groq,DeepSeek,Together,Mistral,xAI,Fireworks,Perplexity,Custom
 // @variableSuggest     ReasoningEffort=none,minimal,low,medium,high,xhigh
 // @quickOption         Model
-// @quickOption         ReasoningEffort
 // ==/ICEProvider==
 
 const https = require('https');
@@ -35,26 +35,85 @@ function debug(message) {
 }
 
 /**
- * Resolves the request endpoint from the configured host and path.
- * `APIHost` may be a bare hostname (defaults to https on port 443) or a full
- * base URL such as `http://localhost:8080`, enabling local/proxy endpoints.
+ * Well-known OpenAI-compatible services, keyed by the friendly `Preset` name the
+ * user picks in the config. Each maps to that service's OpenAI-style base URL
+ * (everything before `/chat/completions`), so users don't have to hand-assemble a
+ * host and path. This table is the single source of truth for preset endpoints;
+ * the header's `@variableSuggest Preset=...` list only mirrors these names for the
+ * picker. `local` marks endpoints that run on the user's machine and need no key.
  */
-function resolveEndpoint(apiHost, apiPath) {
-  const base = apiHost.includes('://') ? apiHost : `https://${apiHost}`;
-  return new URL(apiPath, base);
+const PRESETS = {
+  'OpenAI':     { baseURL: 'https://api.openai.com/v1' },
+  'Ollama':     { baseURL: 'http://localhost:11434/v1', local: true },
+  'LM Studio':  { baseURL: 'http://localhost:1234/v1', local: true },
+  'OpenRouter': { baseURL: 'https://openrouter.ai/api/v1' },
+  'Groq':       { baseURL: 'https://api.groq.com/openai/v1' },
+  'DeepSeek':   { baseURL: 'https://api.deepseek.com/v1' },
+  'Together':   { baseURL: 'https://api.together.xyz/v1' },
+  'Mistral':    { baseURL: 'https://api.mistral.ai/v1' },
+  'xAI':        { baseURL: 'https://api.x.ai/v1' },
+  'Fireworks':  { baseURL: 'https://api.fireworks.ai/inference/v1' },
+  'Perplexity': { baseURL: 'https://api.perplexity.ai' },
+};
+
+const DEFAULT_PRESET = 'OpenAI';
+
+function hasText(value) {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 /**
- * Derives the models-listing endpoint from the configured chat path, so custom
- * bases/proxies keep working: `/v1/chat/completions` -> `/v1/models`. Falls back
- * to the OpenAI default when the path doesn't follow that convention.
+ * Normalises an OpenAI-style base URL: prepends https:// for a bare host and
+ * guarantees a trailing slash so relative sub-paths (`chat/completions`,
+ * `models`) resolve *under* it instead of replacing its last segment.
  */
-function resolveModelsEndpoint(apiHost, apiPath) {
-  let modelsPath = apiPath.replace(/chat\/completions\/?$/, 'models');
-  if (modelsPath === apiPath) {
-    modelsPath = '/v1/models';
+function normalizeBaseURL(baseURL) {
+  let base = baseURL.trim();
+  if (!/:\/\//.test(base)) {
+    base = `https://${base}`;
   }
-  return resolveEndpoint(apiHost, modelsPath);
+  return base.endsWith('/') ? base : `${base}/`;
+}
+
+/**
+ * Resolves the chat + models endpoints from the config. A friendly `Preset`
+ * (e.g. "Ollama", "OpenRouter") selects a known base URL so users don't have to
+ * hand-assemble a host/path; an explicit `BaseURL` overrides the preset for
+ * custom or self-hosted services. Legacy `APIHost`/`APIPath` configs (from earlier
+ * versions, or pinned inline in a .chat file) are still honoured for backward compatibility.
+ */
+function resolveEndpoints(config) {
+  // Legacy escape hatch: an explicit host/path (old configs, inline overrides)
+  // applies only when no modern BaseURL is set.
+  if (!hasText(config.BaseURL) && hasText(config.APIHost)) {
+    const legacyBase = config.APIHost.includes('://') ? config.APIHost : `https://${config.APIHost}`;
+    const chatPath = hasText(config.APIPath) ? config.APIPath : '/v1/chat/completions';
+    let modelsPath = chatPath.replace(/chat\/completions\/?$/, 'models');
+    if (modelsPath === chatPath) {
+      modelsPath = '/v1/models';
+    }
+    return { chat: new URL(chatPath, legacyBase), models: new URL(modelsPath, legacyBase) };
+  }
+
+  const base = hasText(config.BaseURL)
+    ? normalizeBaseURL(config.BaseURL)
+    : normalizeBaseURL((PRESETS[config.Preset] || PRESETS[DEFAULT_PRESET]).baseURL);
+
+  return { chat: new URL('chat/completions', base), models: new URL('models', base) };
+}
+
+/**
+ * Builds request headers, attaching a Bearer token only when an API key is set —
+ * local presets (Ollama, LM Studio) need none, so this avoids sending a bogus
+ * `Authorization: Bearer undefined`. Any `AdditionalHeaders` are merged in last
+ * so callers can override defaults (e.g. OpenRouter's ranking headers).
+ */
+function buildHeaders(config, base) {
+  const headers = { ...base };
+  if (hasText(config.APIKey)) {
+    headers['Authorization'] = `Bearer ${config.APIKey}`;
+  }
+  return { ...headers, ...JSON.parse(config.AdditionalHeaders || '{}') };
 }
 
 /**
@@ -69,17 +128,14 @@ function handleListOptions(requestID, variableName, config) {
     return;
   }
 
-  const endpoint = resolveModelsEndpoint(config.APIHost, config.APIPath);
+  const endpoint = resolveEndpoints(config).models;
   const transport = endpoint.protocol === 'http:' ? http : https;
   const options = {
     hostname: endpoint.hostname,
     port: endpoint.port || (endpoint.protocol === 'http:' ? 80 : 443),
     path: endpoint.pathname + endpoint.search,
     method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${config.APIKey}`,
-      ...JSON.parse(config.AdditionalHeaders || '{}'),
-    },
+    headers: buildHeaders(config, {}),
   };
 
   const req = transport.request(options, (res) => {
@@ -213,7 +269,7 @@ process.on('message', (message) => {
 
     debug(`Request body: ${requestBody}\n`);
 
-    const endpoint = resolveEndpoint(config.APIHost, config.APIPath);
+    const endpoint = resolveEndpoints(config).chat;
     const transport = endpoint.protocol === 'http:' ? http : https;
 
     const options = {
@@ -221,11 +277,7 @@ process.on('message', (message) => {
       port: endpoint.port || (endpoint.protocol === 'http:' ? 80 : 443),
       path: endpoint.pathname + endpoint.search,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.APIKey}`,
-        ...JSON.parse(config.AdditionalHeaders || '{}'),
-      },
+      headers: buildHeaders(config, { 'Content-Type': 'application/json' }),
     };
 
     debug(`Request options: ${JSON.stringify(options)}\n`);

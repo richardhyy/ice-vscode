@@ -15,8 +15,10 @@
  * Options:
  *   --provider <name>     Provider folder under providers/ (default: OpenAI_Compatible)
  *   --model <id>          Model id (default: $ICE_TEST_MODEL or gpt-5.5)
- *   --host <baseUrl>      API base URL (default: $ICE_TEST_HOST or https://api.openai.com)
- *   --path <path>         API path (default: $ICE_TEST_PATH or /v1/chat/completions)
+ *   --preset <name>       OpenAI-compatible preset, e.g. OpenAI|Ollama|Groq (default: $ICE_TEST_PRESET or OpenAI)
+ *   --base-url <url>      OpenAI-style base URL, e.g. http://localhost:8788/v1 (default: $ICE_TEST_BASE_URL; overrides --preset)
+ *   --host <baseUrl>      Legacy API host (default: $ICE_TEST_HOST) — kept for backward compatibility
+ *   --path <path>         Legacy API path (default: $ICE_TEST_PATH) — kept for backward compatibility
  *   --prompt <text>       User prompt (default: a small reasoning question)
  *   --system <text>       System prompt (default: a generic assistant prompt)
  *   --api-key <key>       API key / bearer token (default: $ICE_TEST_API_KEY or empty)
@@ -64,8 +66,10 @@ const args = parseArgs(process.argv.slice(2));
 
 const providerName = args.provider || 'OpenAI_Compatible';
 const model = args.model || process.env.ICE_TEST_MODEL || 'gpt-5.5';
-const host = args.host || process.env.ICE_TEST_HOST || 'https://api.openai.com';
-const apiPath = args.path || process.env.ICE_TEST_PATH || '/v1/chat/completions';
+const preset = args.preset || process.env.ICE_TEST_PRESET || 'OpenAI';
+const baseUrl = args['base-url'] || process.env.ICE_TEST_BASE_URL || '';
+const host = args.host || process.env.ICE_TEST_HOST || '';
+const apiPath = args.path || process.env.ICE_TEST_PATH || '';
 const prompt = args.prompt || 'What is 23 * 47? Reason it out briefly, then give the final answer.';
 const systemPrompt = args.system || 'You are a helpful assistant.';
 const apiKey = args['api-key'] || process.env.ICE_TEST_API_KEY || '';
@@ -83,8 +87,7 @@ if (!fs.existsSync(providerPath)) {
 // Config mirrors the merged config that ProviderManager passes to a provider.
 const config = {
   APIKey: apiKey,
-  APIHost: host,
-  APIPath: apiPath,
+  Preset: preset,
   Model: model,
   MaxTokensToSample: maxTokens,
   SystemPrompt: systemPrompt,
@@ -92,6 +95,16 @@ const config = {
   LogitBias: '{}',
   AdditionalHeaders: '{}',
 };
+if (baseUrl) {
+  config.BaseURL = baseUrl;
+}
+// Legacy host/path override (still honoured by the OpenAI-compatible provider).
+if (host) {
+  config.APIHost = host;
+}
+if (apiPath) {
+  config.APIPath = apiPath;
+}
 if (reasoningEffort) {
   config.ReasoningEffort = reasoningEffort;
 }
@@ -101,9 +114,15 @@ const messageTrail = [
   { id: 1, role: 'user', content: prompt, parentID: null, timestamp: new Date().toISOString() },
 ];
 
+const endpointDescription = baseUrl
+  ? `${baseUrl.replace(/\/$/, '')}/chat/completions`
+  : host
+    ? `${host}${apiPath || '/v1/chat/completions'}`
+    : `preset: ${preset}`;
+
 console.log('─'.repeat(72));
 console.log(`Provider : ${providerName}  (${providerPath})`);
-console.log(`Endpoint : ${host}${apiPath}`);
+console.log(`Endpoint : ${endpointDescription}`);
 console.log(`Model    : ${model}${reasoningEffort ? `  (reasoning: ${reasoningEffort})` : ''}`);
 console.log(`Prompt   : ${prompt}`);
 console.log('─'.repeat(72));
