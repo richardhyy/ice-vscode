@@ -366,6 +366,24 @@ hr {
     cursor: pointer;
 }
 
+/* Keys that offer a value list get a caret hint and a flex layout to hold it. */
+.config-key-token.has-options {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
+}
+
+.config-key-token-caret {
+    display: inline-flex;
+    align-items: center;
+    opacity: 0.55;
+}
+
+.config-key-token-caret svg {
+    width: 0.68em;
+    height: 0.68em;
+}
+
 .config-content {
     background-color: var(--config-card-background-color);
     padding: var(--padding);
@@ -1935,6 +1953,202 @@ body.rubber-banding .config-content * {
     .selection-check,
     .selection-check svg,
     #selection-bar {
+        transition: none;
+    }
+}
+
+
+/* --- Composer quick-tune bar & option selects ---------------------------- */
+/*
+ * A quiet footer under the draft editor holding provider-declared "quick
+ * options" (model, thinking effort, …). Metadata-level UI: muted until touched,
+ * so the message text keeps the lead.
+ */
+.composer-quick-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.15em 0.1em 0.05em;
+    margin-top: 0.15em;
+}
+
+.composer-quick-bar:empty {
+    display: none;
+}
+
+.option-select {
+    position: relative;
+    display: inline-flex;
+}
+
+.option-select-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    max-width: 16em;
+    padding: 0.15em 0.5em;
+    font: inherit;
+    font-size: 0.82em;
+    line-height: 1.6;
+    color: var(--vscode-descriptionForeground);
+    background-color: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
+    border: 1px solid transparent;
+    border-radius: var(--border-radius-pill);
+    cursor: pointer;
+    transition: background-color 0.15s var(--default-cubic-bezier),
+                border-color 0.15s var(--default-cubic-bezier),
+                color 0.15s var(--default-cubic-bezier);
+}
+
+.option-select-button:hover {
+    background-color: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+    color: var(--vscode-foreground);
+}
+
+.option-select-button:focus-visible {
+    outline: 1px solid var(--accent-color);
+    outline-offset: 1px;
+}
+
+/* An explicit override reads a touch stronger than an inherited/default value. */
+.option-select.is-override .option-select-button {
+    color: var(--vscode-foreground);
+    background-color: color-mix(in srgb, var(--accent-color) 16%, transparent);
+    border-color: color-mix(in srgb, var(--accent-color) 40%, transparent);
+}
+
+.option-select.is-placeholder .option-select-button {
+    font-style: italic;
+}
+
+.option-select-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.option-select-caret {
+    display: inline-flex;
+    align-items: center;
+    opacity: 0.7;
+}
+
+.option-select-caret svg {
+    width: 0.7em;
+    height: 0.7em;
+}
+
+.option-select-menu {
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 0;
+    z-index: 30;
+    min-width: 12em;
+    max-width: 22em;
+    padding: 0.25em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25em;
+    background-color: var(--vscode-editorWidget-background, var(--bg-color));
+    border: 1px solid var(--vscode-editorWidget-border, var(--quaternary-color));
+    border-radius: var(--border-radius-large);
+    box-shadow: 0 2px 8px var(--shadow-color);
+}
+
+/* Filter / custom-value entry pinned above the scrolling option list. */
+.option-select-search {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.3em 0.5em;
+    font: inherit;
+    font-size: 0.86em;
+    color: var(--vscode-input-foreground);
+    background-color: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, var(--quaternary-color));
+    border-radius: var(--border-radius);
+    outline: none;
+}
+
+.option-select-search::placeholder {
+    color: var(--vscode-input-placeholderForeground);
+}
+
+.option-select-search:focus {
+    border-color: var(--accent-color);
+}
+
+.option-select-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    max-height: 13em;
+    overflow-y: auto;
+}
+
+.option-select-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.option-select-list::-webkit-scrollbar-thumb {
+    border-radius: var(--border-radius-small);
+    background-color: var(--vscode-scrollbarSlider-background);
+}
+
+/* The "Use …" escape-hatch row reads as a quiet, distinct action. */
+.option-select-custom .option-select-item-label {
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+}
+
+.option-select-item {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6em;
+    width: 100%;
+    text-align: left;
+    padding: 0.3em 0.55em;
+    font: inherit;
+    font-size: 0.86em;
+    color: var(--vscode-foreground);
+    background-color: transparent;
+    border: none;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+}
+
+.option-select-item:hover,
+.option-select-item:focus-visible {
+    background-color: var(--vscode-list-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+    outline: none;
+}
+
+.option-select-item.selected {
+    background-color: color-mix(in srgb, var(--accent-color) 22%, transparent);
+}
+
+.option-select-item-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.option-select-item-detail {
+    flex-shrink: 0;
+    font-size: 0.85em;
+    color: var(--vscode-descriptionForeground);
+}
+
+.option-select-loading {
+    padding: 0.35em 0.55em;
+    font-size: 0.82em;
+    font-style: italic;
+    color: var(--vscode-descriptionForeground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .option-select-button {
         transition: none;
     }
 }

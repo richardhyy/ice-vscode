@@ -6,11 +6,34 @@ import * as crypto from 'crypto';
 import { ChatMessage } from './chatHistoryManager';
 import { BUILT_IN_SUFFIX } from './constants';
 
+/**
+ * Describes the selectable options a provider exposes for a config variable.
+ * A variable may offer a list of `suggestions` (hints, not a hard constraint —
+ * a custom value is always allowed), be `dynamic` (the provider can list options
+ * at runtime, e.g. querying an API for available models), and/or be flagged as a
+ * `quick` option surfaced in the composer's quick-tune bar. All fields are
+ * optional and independently combinable.
+ */
+export interface ProviderOptionMeta {
+  suggestions?: string[];
+  dynamic?: boolean;
+  quick?: boolean;
+}
+
+/** A single selectable option value, optionally with a friendlier label/detail. */
+export interface ProviderOption {
+  value: string;
+  label?: string;
+  detail?: string;
+}
+
 export interface ProviderConfig {
   info: { [key: string]: string };
   secureVariables: { [key: string]: string | null };
   requiredVariables: { [key: string]: string | null };
   optionalVariables: { [key: string]: string | null };
+  /** Per-variable option metadata (suggested values, dynamic listing, quick-tune). */
+  options: { [key: string]: ProviderOptionMeta };
 }
 
 /** Token usage a provider may report on completion (all fields optional). */
@@ -39,9 +62,13 @@ export interface Provider {
     requiredVariables: string[],
     optionalVariables: string[],
   };
+  /** Per-variable option metadata, surfaced to the webview for suggestion/quick UIs. */
+  options: { [key: string]: ProviderOptionMeta };
   getCompletion: (messageTrail: ChatMessage[], configOverride: { [key: string]: string }, 
                   onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string, meta?: ProviderCompletionMeta) => void) 
                   => Promise<string>;
+  /** Asks the provider to list selectable option values for a config variable. */
+  listOptions: (variableName: string, configOverride?: { [key: string]: string }) => Promise<ProviderOption[]>;
   requestCancel: (requestID: string) => void;
 }
 
@@ -88,6 +115,7 @@ export class ProviderManager {
     }
   } = {};
   private pendingRequests: Map<string, { onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string, meta?: ProviderCompletionMeta) => void }> = new Map();
+  private pendingOptionRequests: Map<string, { resolve: (options: ProviderOption[]) => void, reject: (error: Error) => void }> = new Map();
 
   constructor(private context: vscode.ExtensionContext) {
     // Create custom provider directory if it doesn't exist
@@ -111,6 +139,7 @@ export class ProviderManager {
         secureVariables: {},
         requiredVariables: {},
         optionalVariables: {},
+        options: {},
       };
     }
 
@@ -118,6 +147,15 @@ export class ProviderManager {
     let secureVariables: { [key: string]: null } = {};  // There should not be default values for secure variables.
     let requiredVariables: { [key: string]: string | null } = {};
     let optionalVariables: { [key: string]: string | null } = {};
+    let options: { [key: string]: ProviderOptionMeta } = {};
+
+    /** Lazily fetches (creating if needed) the option metadata for a variable. */
+    const optionMetaFor = (name: string): ProviderOptionMeta => {
+      if (!options[name]) {
+        options[name] = {};
+      }
+      return options[name];
+    };
     
     const header = code.slice(headerStartIndex, headerEndIndex);
     const lines = header.split('\n');
@@ -146,6 +184,18 @@ export class ProviderManager {
         requiredVariables[variableName] = variableDefaultValue;
       } else if (variableType === 'variableOptional') {
         optionalVariables[variableName] = variableDefaultValue;
+      } else if (variableType === 'variableSuggest') {
+        // Suggested values (a hint, not a hard limit), comma-separated (blanks dropped).
+        optionMetaFor(variableName.trim()).suggestions = (variableDefaultValue || '')
+          .split(',')
+          .map((v) => v.trim())
+          .filter((v) => v.length > 0);
+      } else if (variableType === 'variableDynamic') {
+        // The provider can list options at runtime (e.g. available models).
+        optionMetaFor(variableName.trim()).dynamic = true;
+      } else if (variableType === 'quickOption') {
+        // Surface this variable in the composer's quick-tune bar.
+        optionMetaFor(variableName.trim()).quick = true;
       } else {
         providerInfo[variableType] = match[2] || '';
       }
@@ -156,6 +206,7 @@ export class ProviderManager {
       secureVariables: secureVariables,
       requiredVariables: requiredVariables,
       optionalVariables: optionalVariables,
+      options: options,
     };
   }
 
@@ -351,6 +402,20 @@ export class ProviderManager {
           this.pendingRequests.delete(requestID);
           vscode.window.showErrorMessage(`Provider ${providerID} Error: ${error}`);
         }
+      } else if (message.type === 'options') {
+        const { requestID, options } = message;
+        const pending = this.pendingOptionRequests.get(requestID);
+        if (pending) {
+          this.pendingOptionRequests.delete(requestID);
+          pending.resolve(Array.isArray(options) ? options : []);
+        }
+      } else if (message.type === 'optionsError') {
+        const { requestID, error } = message;
+        const pending = this.pendingOptionRequests.get(requestID);
+        if (pending) {
+          this.pendingOptionRequests.delete(requestID);
+          pending.reject(new Error(error || 'Failed to list options'));
+        }
       } else if (message.type === 'warning') {
         console.warn(`Warning message from provider ${providerID}:`, message.content);
         vscode.window.showWarningMessage(`Provider ${providerID} warning: ${message.content}`);
@@ -391,6 +456,7 @@ export class ProviderManager {
         requiredVariables: Object.keys(config.requiredVariables),
         optionalVariables: Object.keys(config.optionalVariables),
       },
+      options: config.options || {},
       getCompletion: async (messageTrail: ChatMessage[], configOverride: { [key: string]: string },
                             onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string, meta?: ProviderCompletionMeta) => void) => {        
         if (!this.providers[providerID].child) {
@@ -419,6 +485,44 @@ export class ProviderManager {
         child.send({ type: 'getCompletion', requestID, messageTrail, config: mergedConfig });
 
         return requestID;
+      },
+      listOptions: async (variableName: string, configOverride: { [key: string]: string } = {}) => {
+        if (!this.providers[providerID].child) {
+          // Provider is not initialized yet; resolve its script path and start it.
+          await this.initializeProvider(providerID, this.getProviderPath(providerID));
+        }
+
+        const { child } = this.providers[providerID];
+
+        if (!child) {
+          throw new Error(`Provider ${providerID} failed to initialize`);
+        }
+
+        // Reload the config (prompting for missing variables) so the provider has
+        // what it needs to list options — e.g. an API key/host to query models.
+        config = await this.readProviderConfig(providerID);
+        const mergedConfig = { ...config.secureVariables, ...config.requiredVariables, ...config.optionalVariables, ...configOverride };
+
+        const requestID = generateUniqueRequestID();
+        return new Promise<ProviderOption[]>((resolve, reject) => {
+          this.pendingOptionRequests.set(requestID, { resolve, reject });
+          // Guard against a provider that never answers a listOptions request.
+          const timer = setTimeout(() => {
+            if (this.pendingOptionRequests.has(requestID)) {
+              this.pendingOptionRequests.delete(requestID);
+              reject(new Error(`Timed out listing options for ${variableName}`));
+            }
+          }, 20000);
+          const settle = (fn: (arg: any) => void) => (arg: any) => {
+            clearTimeout(timer);
+            fn(arg);
+          };
+          this.pendingOptionRequests.set(requestID, {
+            resolve: settle(resolve),
+            reject: settle(reject),
+          });
+          child.send({ type: 'listOptions', requestID, variableName, config: mergedConfig });
+        });
       },
       requestCancel: async (requestID: string) => {
         const { child } = this.providers[providerID];
@@ -452,6 +556,12 @@ export class ProviderManager {
     }
   
     const config = await this.readProviderConfig(providerID);
+    const optionsMeta = config.options || {};
+
+    const hasOptions = (key: string): boolean => {
+      const meta = optionsMeta[key];
+      return !!meta && ((meta.suggestions && meta.suggestions.length > 0) || meta.dynamic === true);
+    };
   
     const configEntries = [
       ...Object.entries(config.secureVariables),
@@ -463,6 +573,8 @@ export class ProviderManager {
       ...configEntries.map(([key, value]) => ({
         label: key,
         description: key in config.secureVariables ? (value && value.length > 0 ? '*****' : 'Not set') : (value || ''),
+        // A caret hints that this entry offers a list of values to pick from.
+        detail: hasOptions(key) ? '$(chevron-down) Choose from a list' : undefined,
       })),
       { kind: vscode.QuickPickItemKind.Separator, label: '' },
       {
@@ -482,13 +594,20 @@ export class ProviderManager {
       } else {
         const [key, oldValue] = configEntries.find(([k]) => k === selectedItem.label)!;
         const isSecure = key in config.secureVariables;
-  
-        const newValue = await vscode.window.showInputBox({
-          prompt: `Enter value for ${key}`,
-          value: oldValue || '',
-          password: isSecure,
-          ignoreFocusOut: true,
-        });
+
+        let newValue: string | undefined;
+        if (!isSecure && hasOptions(key)) {
+          // Offer a picked list (suggested values plus any the provider lists at
+          // runtime), while still allowing a free-form custom value.
+          newValue = await this.promptForOptionValue(providerID, key, oldValue || '', optionsMeta[key]);
+        } else {
+          newValue = await vscode.window.showInputBox({
+            prompt: `Enter value for ${key}`,
+            value: oldValue || '',
+            password: isSecure,
+            ignoreFocusOut: true,
+          });
+        }
   
         if (newValue !== undefined) {
           if (isSecure) {
@@ -504,6 +623,83 @@ export class ProviderManager {
         }
       }
     }
+  }
+
+  /**
+   * Presents a QuickPick of selectable values for a config variable with
+   * suggestions and/or dynamic listing. Suggested values are shown immediately;
+   * for dynamic variables the provider is asked to list options (e.g. querying
+   * available models), shown as they resolve. A "custom value" escape hatch is
+   * always available. Returns the chosen value, or undefined if dismissed.
+   */
+  private async promptForOptionValue(providerID: string, key: string, currentValue: string, meta: ProviderOptionMeta): Promise<string | undefined> {
+    const CUSTOM_LABEL = '$(edit) Enter a custom value\u2026';
+
+    const buildItems = (values: ProviderOption[]): vscode.QuickPickItem[] => {
+      const seen = new Set<string>();
+      const items: vscode.QuickPickItem[] = [];
+      for (const option of values) {
+        if (!option || typeof option.value !== 'string' || seen.has(option.value)) {
+          continue;
+        }
+        seen.add(option.value);
+        items.push({
+          label: option.value === currentValue ? `$(check) ${option.value}` : option.value,
+          description: option.label,
+          detail: option.detail,
+        });
+      }
+      items.push({ kind: vscode.QuickPickItemKind.Separator, label: '' });
+      items.push({ label: CUSTOM_LABEL, description: currentValue ? `Current: ${currentValue}` : undefined });
+      return items;
+    };
+
+    const staticOptions: ProviderOption[] = (meta.suggestions || []).map((v) => ({ value: v }));
+
+    const quickPick = vscode.window.createQuickPick();
+    quickPick.title = `Select ${key}`;
+    quickPick.placeholder = currentValue ? `Current: ${currentValue}` : `Choose a value for ${key}`;
+    quickPick.ignoreFocusOut = true;
+    quickPick.matchOnDescription = true;
+    quickPick.items = buildItems(staticOptions);
+
+    if (meta.dynamic) {
+      quickPick.busy = true;
+      // Fetch runtime options in the background and merge them in when ready.
+      (async () => {
+        try {
+          const provider = await this.getProviderByID(providerID);
+          const dynamic = provider ? await provider.listOptions(key) : [];
+          quickPick.items = buildItems([...dynamic, ...staticOptions]);
+        } catch (e: any) {
+          quickPick.items = buildItems(staticOptions);
+          vscode.window.showWarningMessage(`Could not list ${key} options: ${e.message}`);
+        } finally {
+          quickPick.busy = false;
+        }
+      })();
+    }
+
+    const picked = await new Promise<vscode.QuickPickItem | undefined>((resolve) => {
+      quickPick.onDidAccept(() => resolve(quickPick.selectedItems[0]));
+      quickPick.onDidHide(() => resolve(undefined));
+      quickPick.show();
+    });
+    quickPick.hide();
+    quickPick.dispose();
+
+    if (!picked) {
+      return undefined;
+    }
+    if (picked.label === CUSTOM_LABEL) {
+      return await vscode.window.showInputBox({
+        prompt: `Enter value for ${key}`,
+        value: currentValue,
+        ignoreFocusOut: true,
+      });
+    }
+    // Strip the "$(check) " prefix from the currently-selected item's label.
+    return picked.label.replace(/^\$\(check\)\s*/, '');
   }
 
   public async openProviderScript(providerID: string): Promise<void> {

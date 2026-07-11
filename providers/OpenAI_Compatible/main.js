@@ -16,6 +16,10 @@
 // @variableOptional    LogitBias={}
 // @variableOptional    AdditionalHeaders={}
 // @variableOptional    ReasoningEffort
+// @variableDynamic     Model
+// @variableSuggest     ReasoningEffort=none,minimal,low,medium,high,xhigh
+// @quickOption         Model
+// @quickOption         ReasoningEffort
 // ==/ICEProvider==
 
 const https = require('https');
@@ -38,6 +42,72 @@ function debug(message) {
 function resolveEndpoint(apiHost, apiPath) {
   const base = apiHost.includes('://') ? apiHost : `https://${apiHost}`;
   return new URL(apiPath, base);
+}
+
+/**
+ * Derives the models-listing endpoint from the configured chat path, so custom
+ * bases/proxies keep working: `/v1/chat/completions` -> `/v1/models`. Falls back
+ * to the OpenAI default when the path doesn't follow that convention.
+ */
+function resolveModelsEndpoint(apiHost, apiPath) {
+  let modelsPath = apiPath.replace(/chat\/completions\/?$/, 'models');
+  if (modelsPath === apiPath) {
+    modelsPath = '/v1/models';
+  }
+  return resolveEndpoint(apiHost, modelsPath);
+}
+
+/**
+ * Lists the models the configured endpoint advertises (GET /v1/models) and
+ * reports them back to ICE as selectable options. Only the `Model` variable is
+ * dynamic; anything else resolves to an empty list so the UI keeps its static
+ * options. Failures are reported via `optionsError` so the caller can fall back.
+ */
+function handleListOptions(requestID, variableName, config) {
+  if (variableName !== 'Model') {
+    process.send({ type: 'options', requestID, variableName, options: [] });
+    return;
+  }
+
+  const endpoint = resolveModelsEndpoint(config.APIHost, config.APIPath);
+  const transport = endpoint.protocol === 'http:' ? http : https;
+  const options = {
+    hostname: endpoint.hostname,
+    port: endpoint.port || (endpoint.protocol === 'http:' ? 80 : 443),
+    path: endpoint.pathname + endpoint.search,
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${config.APIKey}`,
+      ...JSON.parse(config.AdditionalHeaders || '{}'),
+    },
+  };
+
+  const req = transport.request(options, (res) => {
+    let body = '';
+    res.on('data', (chunk) => { body += chunk; });
+    res.on('end', () => {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        process.send({ type: 'optionsError', requestID, variableName, error: `Model listing failed (HTTP ${res.statusCode})` });
+        return;
+      }
+      try {
+        const parsed = JSON.parse(body);
+        const list = Array.isArray(parsed.data) ? parsed.data : [];
+        const models = list
+          .map((entry) => (entry && typeof entry.id === 'string' ? entry.id : null))
+          .filter((id) => id)
+          .sort((a, b) => a.localeCompare(b))
+          .map((id) => ({ value: id }));
+        process.send({ type: 'options', requestID, variableName, options: models });
+      } catch (e) {
+        process.send({ type: 'optionsError', requestID, variableName, error: `Could not parse model list: ${e.message}` });
+      }
+    });
+  });
+  req.on('error', (error) => {
+    process.send({ type: 'optionsError', requestID, variableName, error: error.message });
+  });
+  req.end();
 }
 
 let requests = {};
@@ -313,6 +383,8 @@ process.on('message', (message) => {
       requests[requestID].destroy();
       delete requests[requestID];
     }
+  } else if (message.type === 'listOptions') {
+    handleListOptions(requestID, message.variableName, message.config || {});
   } else {
     debug(`Unknown message type: ${message.type}\n`);
   }

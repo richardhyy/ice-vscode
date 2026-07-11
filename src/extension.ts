@@ -596,8 +596,26 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             vscode.window.showErrorMessage(`Provider ${message.providerID} not found.`);
             break;
           }
-          webviewPanel.webview.postMessage({ type: 'providerConfig', providerID: message.providerID, configKeys: providerEntity.configKeys });
+          webviewPanel.webview.postMessage({ type: 'providerConfig', providerID: message.providerID, configKeys: providerEntity.configKeys, options: providerEntity.options });
           break;
+        case 'fetchProviderOptions': {
+          // Ask a provider to list selectable values for a config variable (e.g.
+          // available models). Runs off the webview's request id so several
+          // controls can resolve independently; errors are reported back so the
+          // control can fall back to its static options.
+          const optionsProvider = await this.providerManager.getProviderByID(message.providerID);
+          if (!optionsProvider) {
+            webviewPanel.webview.postMessage({ type: 'providerOptions', requestID: message.requestID, variableName: message.variableName, error: `Provider ${message.providerID} not found.` });
+            break;
+          }
+          try {
+            const options = await optionsProvider.listOptions(message.variableName, message.config || {});
+            webviewPanel.webview.postMessage({ type: 'providerOptions', requestID: message.requestID, providerID: message.providerID, variableName: message.variableName, options });
+          } catch (e: any) {
+            webviewPanel.webview.postMessage({ type: 'providerOptions', requestID: message.requestID, providerID: message.providerID, variableName: message.variableName, error: e.message });
+          }
+          break;
+        }
         case 'createSnippet':
           if (!message.content) {
             vscode.window.showErrorMessage('Select text to create a snippet.');

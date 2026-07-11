@@ -5,7 +5,7 @@ import { Ruler } from './widgets/ruler.js';
 import { EditorState, Prec } from "@codemirror/state";
 import { EditorView, keymap, placeholder } from "@codemirror/view";
 import { minimalSetup } from "codemirror";
-import { autocompletion } from "@codemirror/autocomplete";
+import { autocompletion, startCompletion } from "@codemirror/autocomplete";
 
 const vscode = acquireVsCodeApi();
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
@@ -28,6 +28,20 @@ let _staleMessageIDs = new Set();
 let currentProvider = null;
 let availableProviders = [];
 let providerConfigKeys = {}; // {providerID: [configKey1, configKey2, ...]}
+// Per-variable option metadata a provider exposes: {providerID: {varName: {suggestions?, dynamic?, quick?}}}.
+let providerOptions = {};
+// Cache of dynamically-listed option values: {providerID: {varName: [{value,label?,detail?}]}}.
+let providerDynamicOptionsCache = {};
+// In-flight/finished dynamic option fetches so we never double-request: {providerID: {varName: 'loading'|'done'}}.
+let _dynamicOptionsState = {};
+// Pending provider-option requests keyed by request id -> resolve callback.
+let _pendingOptionRequests = {};
+let _optionRequestCounter = 0;
+// Callbacks waiting for a provider's config/options payload: {providerID: [cb, ...]}.
+let _providerConfigWaiters = {};
+// Quick-tune overrides chosen in the composer, keyed by the (shadow) message id
+// -> {ConfigKey: value}. Materialised into a #config node when the message is sent.
+let _composerQuickConfig = {};
 let snippets = {}; // {completion: content}
 
 let globalUndoLock = null;
@@ -260,15 +274,50 @@ function _handleMessageSubmit(content, message) {
 
   if (flatMessages[message.id] === undefined) {
     // If the message is a shadow message, create a new message
+    const shadowId = message.id;
+    const parentID = message.parentID;
+
+    // Materialise any composer quick-tune overrides (model, thinking effort, …)
+    // as a #config node placed just before this message — but only for keys that
+    // actually differ from the inherited config, so no redundant nodes appear.
+    let configDiff = null;
+    const quick = _composerQuickConfig[shadowId];
+    if (quick) {
+      const inherited = parentID != null ? getMessageConfig(parentID) : {};
+      configDiff = {};
+      for (const key in quick) {
+        const value = quick[key];
+        const inheritedValue = inherited[key] == null ? "" : String(inherited[key]);
+        if (value !== undefined && value !== null && value !== "" && String(value) !== inheritedValue) {
+          configDiff[key] = value;
+        }
+      }
+      if (Object.keys(configDiff).length === 0) {
+        configDiff = null;
+      }
+    }
+
     message = {
-      id: Date.now(),
+      id: _freshID(),
       role: "user",
       content,
-      attachments: _editingMessageAttachments[message.id],
-      parentID: message.parentID,
+      attachments: _editingMessageAttachments[shadowId],
+      parentID: parentID,
       timestamp: new Date().toISOString(),
     };
-    addMessage(message);
+
+    if (configDiff) {
+      // Insert the config node and the user message as one undoable step.
+      _asUndoTransaction(() => {
+        const configID = insertConfigUpdate(parentID, null, configDiff);
+        message.parentID = configID;
+        addMessage(message);
+      });
+    } else {
+      addMessage(message);
+    }
+
+    delete _composerQuickConfig[shadowId];
   } else {
     // Edit the message if it's an existing message
     message.content = content;
@@ -543,6 +592,511 @@ function _decodeConfig(str) {
 }
 
 
+// --- Provider option selection ----------------------------------------------
+// Providers may declare that a config variable has suggestions (a hint list of
+// values, never a hard limit), is dynamic (the provider lists values at runtime,
+// e.g. available models), and/or is a "quick option" surfaced in the composer's
+// quick-tune bar. These helpers fetch/cache those options and drive the
+// value-selection UIs (config-editor autocomplete, composer quick-tune, panel).
+
+/** Normalises a provider option list to `[{value, label?, detail?}]`, accepting bare strings. */
+function _normalizeOptions(options) {
+  if (!Array.isArray(options)) {
+    return [];
+  }
+  return options
+    .map((option) => {
+      if (typeof option === "string") {
+        return { value: option };
+      }
+      if (option && typeof option.value === "string") {
+        return { value: option.value, label: option.label, detail: option.detail };
+      }
+      return null;
+    })
+    .filter((option) => option !== null);
+}
+
+/** The option metadata a provider declared for a variable, or null. */
+function _optionMetaFor(providerID, variableName) {
+  const meta = providerOptions[providerID];
+  return (meta && meta[variableName]) || null;
+}
+
+/**
+ * Ensures a provider's config keys + option metadata are loaded, then runs `cb`.
+ * If already loaded, `cb` runs synchronously; otherwise it is queued and the
+ * payload is requested from the host (see the `providerConfig` handler).
+ */
+function _ensureProviderConfig(providerID, cb) {
+  if (!providerID) {
+    return;
+  }
+  if (providerOptions[providerID] !== undefined) {
+    cb();
+    return;
+  }
+  if (!_providerConfigWaiters[providerID]) {
+    _providerConfigWaiters[providerID] = [];
+  }
+  _providerConfigWaiters[providerID].push(cb);
+  vscode.postMessage({ type: "fetchProviderConfig", providerID: providerID });
+}
+
+/**
+ * Requests the runtime option values for a variable from its provider.
+ * @returns {Promise<Array<{value:string,label?:string,detail?:string}>>}
+ */
+function _fetchProviderOptions(providerID, variableName) {
+  return new Promise((resolve, reject) => {
+    const requestID = "opt-" + Date.now() + "-" + _optionRequestCounter++;
+    _pendingOptionRequests[requestID] = { resolve, reject };
+    vscode.postMessage({
+      type: "fetchProviderOptions",
+      requestID: requestID,
+      providerID: providerID,
+      variableName: variableName,
+    });
+  });
+}
+
+/**
+ * Lazily loads (and caches) a dynamic variable's options, invoking `onReady`
+ * with the option list once available. Static-only variables resolve
+ * immediately from their declared suggestions; failures fall back to them.
+ */
+function _loadDynamicOptions(providerID, variableName, onReady) {
+  const meta = _optionMetaFor(providerID, variableName) || {};
+  const staticOptions = (meta.suggestions || []).map((value) => ({ value }));
+
+  if (!meta.dynamic) {
+    onReady(staticOptions, false);
+    return;
+  }
+
+  const cached = providerDynamicOptionsCache[providerID] && providerDynamicOptionsCache[providerID][variableName];
+  if (cached) {
+    onReady(_mergeOptions(cached, staticOptions), false);
+    return;
+  }
+
+  const state = _dynamicOptionsState[providerID] || (_dynamicOptionsState[providerID] = {});
+
+  if (state[variableName] === "error") {
+    // A previous fetch failed; don't hammer the endpoint — offer static options.
+    onReady(staticOptions, false);
+    return;
+  }
+
+  // Signal "loading" so the caller can show a spinner; static options meanwhile.
+  onReady(staticOptions, true);
+
+  if (state[variableName] === "loading") {
+    return;
+  }
+  state[variableName] = "loading";
+  _fetchProviderOptions(providerID, variableName)
+    .then((options) => {
+      if (!providerDynamicOptionsCache[providerID]) {
+        providerDynamicOptionsCache[providerID] = {};
+      }
+      providerDynamicOptionsCache[providerID][variableName] = options;
+      state[variableName] = "done";
+      onReady(_mergeOptions(options, staticOptions), false);
+    })
+    .catch((error) => {
+      state[variableName] = "error";
+      console.warn("Failed to list options for", variableName, error);
+      onReady(staticOptions, false, error);
+    });
+}
+
+/** Merges two option lists, keeping the first occurrence of each value. */
+function _mergeOptions(primary, secondary) {
+  const seen = new Set();
+  const merged = [];
+  for (const option of [...primary, ...secondary]) {
+    if (option && typeof option.value === "string" && !seen.has(option.value)) {
+      seen.add(option.value);
+      merged.push(option);
+    }
+  }
+  return merged;
+}
+
+/** True when the provider declared any selectable values for the variable. */
+function _hasSelectableOptions(providerID, variableName) {
+  const meta = _optionMetaFor(providerID, variableName);
+  return !!meta && ((meta.suggestions && meta.suggestions.length > 0) || meta.dynamic === true);
+}
+
+/** Humanises a config variable name for display ("ReasoningEffort" -> "Reasoning Effort"). */
+function _humanizeVariableName(name) {
+  return String(name)
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim();
+}
+
+
+// The currently-open option-select menu (only one at a time), so opening one or
+// clicking elsewhere closes any other.
+let _openOptionSelect = null;
+
+/**
+ * Builds a compact, theme-aware dropdown for picking a provider option value.
+ * Suggested values appear immediately; dynamic variables show a "Loading…"
+ * state while the provider lists values, then populate in place. An optional
+ * "Default" entry clears the override (passes null to `onChange`).
+ *
+ * @param {Object} opts
+ * @param {string} opts.providerID
+ * @param {string} opts.variableName
+ * @param {string} [opts.currentValue] The active value (may be inherited).
+ * @param {boolean} [opts.isOverride] Whether currentValue is an explicit override.
+ * @param {boolean} [opts.allowClear] Offer a "Default" entry that clears the value.
+ * @param {Function} opts.onChange Called with the chosen value (or null to clear).
+ * @returns {HTMLElement}
+ */
+function _createOptionSelect(opts) {
+  const { providerID, variableName, onChange } = opts;
+  const humanName = _humanizeVariableName(variableName);
+
+  const wrapper = document.createElement("div");
+  wrapper.classList.add("option-select");
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.classList.add("option-select-button");
+  button.setAttribute("aria-haspopup", "listbox");
+  button.setAttribute("aria-expanded", "false");
+  button.title = humanName;
+
+  const labelText = document.createElement("span");
+  labelText.classList.add("option-select-label");
+
+  const caret = document.createElement("span");
+  caret.classList.add("option-select-caret");
+  caret.innerHTML = icons.ICON_CARET_DOWN;
+
+  button.appendChild(labelText);
+  button.appendChild(caret);
+  wrapper.appendChild(button);
+
+  let currentValue = opts.currentValue || "";
+  let isOverride = Boolean(opts.isOverride);
+
+  function renderLabel() {
+    if (currentValue) {
+      labelText.textContent = currentValue;
+      wrapper.classList.toggle("is-override", isOverride);
+      wrapper.classList.remove("is-placeholder");
+    } else {
+      labelText.textContent = humanName;
+      wrapper.classList.remove("is-override");
+      wrapper.classList.add("is-placeholder");
+    }
+  }
+  renderLabel();
+
+  let menu = null;
+  let list = null;
+  let searchInput = null;
+  let currentOptions = [];
+  let currentLoading = false;
+
+  function closeMenu() {
+    if (menu) {
+      menu.remove();
+      menu = null;
+    }
+    list = null;
+    searchInput = null;
+    button.setAttribute("aria-expanded", "false");
+    if (_openOptionSelect === api) {
+      _openOptionSelect = null;
+    }
+    document.removeEventListener("pointerdown", onDocPointerDown, true);
+    document.removeEventListener("keydown", onDocKeyDown, true);
+  }
+
+  function onDocPointerDown(event) {
+    if (!wrapper.contains(event.target)) {
+      closeMenu();
+    }
+  }
+
+  function onDocKeyDown(event) {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      closeMenu();
+      button.focus();
+    }
+  }
+
+  /** Applies a value as an explicit override (used by option clicks and custom entry). */
+  function selectValue(value) {
+    currentValue = value;
+    isOverride = true;
+    renderLabel();
+    closeMenu();
+    button.focus();
+    onChange(value);
+  }
+
+  /** Commits a free-typed value, so declared suggestions are a hint, never a hard limit. */
+  function commitCustom(value) {
+    const trimmed = String(value).trim();
+    if (trimmed) {
+      selectValue(trimmed);
+    }
+  }
+
+  // Records the latest option list/loading state, then re-renders the menu body.
+  function buildMenuItems(options, loading) {
+    currentOptions = Array.isArray(options) ? options : [];
+    currentLoading = Boolean(loading);
+    if (list) {
+      renderList();
+    }
+  }
+
+  // Renders the menu body: Default (when unfiltered), the filtered options, an
+  // escape-hatch "Use …" row for any typed value, and loading/empty states.
+  function renderList() {
+    list.innerHTML = "";
+    const rawFilter = searchInput ? searchInput.value.trim() : "";
+    const filter = rawFilter.toLowerCase();
+
+    if (opts.allowClear && !filter) {
+      // "Default" is the active choice only when there is no effective value.
+      list.appendChild(makeItem({ value: "", label: "Default" }, !currentValue, true));
+    }
+
+    const filtered = currentOptions.filter((option) => {
+      if (!filter) {
+        return true;
+      }
+      const haystack = ((option.label || "") + " " + option.value).toLowerCase();
+      return haystack.includes(filter);
+    });
+
+    for (const option of filtered) {
+      list.appendChild(makeItem(option, option.value === currentValue, false));
+    }
+
+    // Offer to use a typed value that isn't already an exact option value.
+    const exact = currentOptions.some((option) => option.value === rawFilter);
+    if (rawFilter && !exact) {
+      list.appendChild(makeCustomItem(rawFilter));
+    }
+
+    if (currentLoading) {
+      const loadingItem = document.createElement("div");
+      loadingItem.classList.add("option-select-loading");
+      loadingItem.textContent = "Loading\u2026";
+      list.appendChild(loadingItem);
+    } else if (filtered.length === 0 && !rawFilter && !opts.allowClear) {
+      const emptyItem = document.createElement("div");
+      emptyItem.classList.add("option-select-loading");
+      emptyItem.textContent = "No options";
+      list.appendChild(emptyItem);
+    }
+  }
+
+  function makeCustomItem(value) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.classList.add("option-select-item", "option-select-custom");
+    item.setAttribute("role", "option");
+
+    const primary = document.createElement("span");
+    primary.classList.add("option-select-item-label");
+    primary.textContent = "Use \u201C" + value + "\u201D";
+    item.appendChild(primary);
+
+    item.addEventListener("click", () => commitCustom(value));
+    return item;
+  }
+
+  function makeItem(option, selected, isClear) {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.classList.add("option-select-item");
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", selected ? "true" : "false");
+    if (selected) {
+      item.classList.add("selected");
+    }
+
+    const primary = document.createElement("span");
+    primary.classList.add("option-select-item-label");
+    primary.textContent = isClear ? "Default" : (option.label || option.value);
+    item.appendChild(primary);
+
+    if (!isClear && option.detail) {
+      const detail = document.createElement("span");
+      detail.classList.add("option-select-item-detail");
+      detail.textContent = option.detail;
+      item.appendChild(detail);
+    }
+
+    item.addEventListener("click", () => {
+      if (isClear) {
+        // "Default" drops the override, reverting to the inherited value.
+        currentValue = opts.inheritedValue || "";
+        isOverride = false;
+        renderLabel();
+        closeMenu();
+        button.focus();
+        onChange(null);
+      } else {
+        selectValue(option.value);
+      }
+    });
+    return item;
+  }
+
+  function openMenu() {
+    if (_openOptionSelect && _openOptionSelect !== api) {
+      _openOptionSelect.close();
+    }
+    menu = document.createElement("div");
+    menu.classList.add("option-select-menu");
+    menu.setAttribute("role", "listbox");
+    menu.setAttribute("aria-label", humanName);
+
+    // A filter box that doubles as a custom-value entry: type to narrow the
+    // list, or type any value and press Enter to use it (declared options are
+    // suggestions, not a hard constraint).
+    searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.classList.add("option-select-search");
+    searchInput.placeholder = "Filter or enter a value\u2026";
+    searchInput.setAttribute("aria-label", humanName + " \u2014 filter or custom value");
+    searchInput.addEventListener("input", renderList);
+    searchInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const typed = searchInput.value.trim();
+        const match = currentOptions.find((option) => option.value === typed);
+        if (match) {
+          selectValue(match.value);
+        } else if (typed) {
+          commitCustom(typed);
+        }
+      } else if (event.key === "ArrowDown") {
+        const first = list.querySelector(".option-select-item");
+        if (first) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    });
+    menu.appendChild(searchInput);
+
+    list = document.createElement("div");
+    list.classList.add("option-select-list");
+    menu.appendChild(list);
+
+    wrapper.appendChild(menu);
+    button.setAttribute("aria-expanded", "true");
+    _openOptionSelect = api;
+    document.addEventListener("pointerdown", onDocPointerDown, true);
+    document.addEventListener("keydown", onDocKeyDown, true);
+
+    buildMenuItems([], true);
+    _loadDynamicOptions(providerID, variableName, (options, loading) => {
+      if (menu) {
+        buildMenuItems(options, loading);
+      }
+    });
+
+    // Let the user type immediately (filter long model lists / enter a value).
+    searchInput.focus();
+  }
+
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (menu) {
+      closeMenu();
+    } else {
+      openMenu();
+    }
+  });
+
+  const api = {
+    element: wrapper,
+    close: closeMenu,
+  };
+  return wrapper;
+}
+
+
+/**
+ * Appends the composer quick-tune bar to a draft message editor. Renders one
+ * dropdown per provider-declared "quick option" (e.g. model, thinking effort),
+ * seeded from the inherited config and writing user choices into
+ * `_composerQuickConfig[message.id]`, which is materialised into a #config node
+ * when the message is sent (see _handleMessageSubmit).
+ * @param {HTMLElement} parentElement
+ * @param {Object} message The draft (shadow) message being composed.
+ */
+function _appendComposerQuickBar(parentElement, message) {
+  // A shadow draft isn't in flatMessages yet, so inherit config from its parent.
+  const configBaseMessageID = message.isShadow ? message.parentID : message.id;
+  const inheritedConfig = configBaseMessageID != null ? getMessageConfig(configBaseMessageID) : {};
+  const providerID = inheritedConfig.Provider || currentProvider;
+  if (!providerID) {
+    return;
+  }
+
+  const bar = document.createElement("div");
+  bar.classList.add("composer-quick-bar");
+  parentElement.appendChild(bar);
+
+  _ensureProviderConfig(providerID, () => {
+    // The editor may have been dismissed while the payload was in flight.
+    if (!bar.isConnected) {
+      return;
+    }
+    const meta = providerOptions[providerID] || {};
+    const quickKeys = Object.keys(meta).filter((key) => meta[key] && meta[key].quick);
+    if (quickKeys.length === 0) {
+      bar.remove();
+      return;
+    }
+
+    for (const key of quickKeys) {
+      const override = _composerQuickConfig[message.id] && _composerQuickConfig[message.id][key];
+      const inherited = inheritedConfig[key];
+      const hasOverride = override !== undefined && override !== null && override !== "";
+      const select = _createOptionSelect({
+        providerID: providerID,
+        variableName: key,
+        currentValue: hasOverride ? override : (inherited || ""),
+        isOverride: hasOverride,
+        inheritedValue: inherited || "",
+        allowClear: true,
+        onChange: (value) => {
+          if (value === null || value === "") {
+            if (_composerQuickConfig[message.id]) {
+              delete _composerQuickConfig[message.id][key];
+            }
+          } else {
+            if (!_composerQuickConfig[message.id]) {
+              _composerQuickConfig[message.id] = {};
+            }
+            _composerQuickConfig[message.id][key] = value;
+          }
+        },
+      });
+      bar.appendChild(select);
+    }
+  });
+}
+
+
 /**
  * Renders attachments for a specific message.
  * @param {string} messageID - The ID of the message to render attachments for.
@@ -811,6 +1365,14 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
         });
       });
       messageContentEditing.appendChild(attachmentButton);
+
+      // Quick-tune bar: provider-specified options (e.g. model, thinking effort)
+      // the user can adjust for the message being composed. Only shown for the
+      // active draft (shadow) message, and only when the provider declares any.
+      // Placed below the editor row as a quiet composer footer.
+      if (message.isShadow) {
+        _appendComposerQuickBar(messageContent, message);
+      }
 
       // Attachment list
       messageContent.appendChild(attachmentContainer);
@@ -1138,10 +1700,22 @@ function _updateAvailableConfigKeys(providerID, editorContainer, configKeyContai
 
   const config = _decodeConfig(editor.state.doc.toString());
 
-  function createKeyToken(key, group, type, detail = undefined) {
+  function createKeyToken(key, group, type, detail = undefined, hasOptions = false) {
     const tokenElement = document.createElement("span");
     tokenElement.classList.add("config-key-token");
-    tokenElement.textContent = key;
+    if (hasOptions) {
+      tokenElement.classList.add("has-options");
+    }
+    const keyLabel = document.createElement("span");
+    keyLabel.textContent = key;
+    tokenElement.appendChild(keyLabel);
+    if (hasOptions) {
+      // A caret hints that this key offers a list of values to pick from.
+      const caret = document.createElement("span");
+      caret.classList.add("config-key-token-caret");
+      caret.innerHTML = icons.ICON_CARET_DOWN;
+      tokenElement.appendChild(caret);
+    }
     tokenElement.title = group;
     tokenElement.addEventListener("click", function () {
       editor.dispatch({
@@ -1152,6 +1726,10 @@ function _updateAvailableConfigKeys(providerID, editorContainer, configKeyContai
       });
       editor.focus();
       _updateAvailableConfigKeys(providerID, editorContainer, configKeyContainerID, messageID);
+      if (hasOptions) {
+        // Immediately open the value picker for suggested/dynamic keys.
+        startCompletion(editor);
+      }
     });
     configKeyContainer.appendChild(tokenElement);
 
@@ -1166,7 +1744,7 @@ function _updateAvailableConfigKeys(providerID, editorContainer, configKeyContai
   for (let group of Object.keys(providerConfigKeys[providerID])) {
     for (let key of providerConfigKeys[providerID][group]) {
       if (config[key] === undefined) {
-        createKeyToken(key, group, `config-key-${group}`);
+        createKeyToken(key, group, `config-key-${group}`, undefined, _hasSelectableOptions(providerID, key));
       }
     }
   }
@@ -1214,7 +1792,54 @@ function _renderConfigNode(messageNode, message, clipContent, editing) {
         if (!providerConfigKeys[providerID]) {
           return null;
         }
-      
+
+        // Value position: completing the value of "Key = <prefix>" on this line.
+        // For suggested/dynamic keys, offer the provider's selectable values.
+        const line = context.state.doc.lineAt(context.pos);
+        const textBefore = line.text.slice(0, context.pos - line.from);
+        const keyValueMatch = /^(\w[\w-]*)\s*=\s*(.*)$/.exec(textBefore);
+        if (keyValueMatch) {
+          const key = keyValueMatch[1];
+          const valuePrefix = keyValueMatch[2];
+          if (!_hasSelectableOptions(providerID, key)) {
+            return null;
+          }
+          const meta = _optionMetaFor(providerID, key) || {};
+          const staticOptions = (meta.suggestions || []).map((value) => ({ value }));
+          const cached = providerDynamicOptionsCache[providerID] && providerDynamicOptionsCache[providerID][key];
+          const optionList = cached ? _mergeOptions(cached, staticOptions) : staticOptions;
+
+          // Lazily fetch dynamic options, reopening the picker once they arrive.
+          if (meta.dynamic && !cached) {
+            let sync = true;
+            _loadDynamicOptions(providerID, key, (options, loading) => {
+              // Only reopen on the asynchronous arrival (not the synchronous
+              // static/error response), so a failed fetch can't loop.
+              if (!sync && !loading) {
+                const liveEditor = EditorView.findFromDOM(codeMirrorContainer);
+                if (liveEditor && liveEditor.hasFocus) {
+                  startCompletion(liveEditor);
+                }
+              }
+            });
+            sync = false;
+          }
+
+          const valueOptions = optionList.map((option) => ({
+            label: option.value,
+            detail: option.label || option.detail,
+            type: "config-value",
+          }));
+          if (valueOptions.length === 0) {
+            return null;
+          }
+          return {
+            from: context.pos - valuePrefix.length,
+            options: valueOptions,
+            validFor: /^.*$/,
+          };
+        }
+
         if (autocompleteItems.length === 0) {
           autocompleteItems = _updateAvailableConfigKeys(providerID, codeMirrorContainer, configKeyContainer.id, message.id);
         }
@@ -3383,7 +4008,29 @@ window.addEventListener("message", (event) => {
       break;
     case "providerConfig":
       providerConfigKeys[message.providerID] = message.configKeys;
+      providerOptions[message.providerID] = message.options || {};
+      // Wake anything waiting on this provider's config/options (e.g. a composer
+      // quick-tune bar rendered before the payload arrived).
+      if (_providerConfigWaiters[message.providerID]) {
+        const waiters = _providerConfigWaiters[message.providerID];
+        delete _providerConfigWaiters[message.providerID];
+        waiters.forEach((cb) => {
+          try { cb(); } catch (e) { console.error(e); }
+        });
+      }
       break;
+    case "providerOptions": {
+      const resolver = _pendingOptionRequests[message.requestID];
+      if (resolver) {
+        delete _pendingOptionRequests[message.requestID];
+        if (message.error) {
+          resolver.reject(new Error(message.error));
+        } else {
+          resolver.resolve(_normalizeOptions(message.options));
+        }
+      }
+      break;
+    }
     case "loadSnippets":
       snippets = message.snippets;
       break;
