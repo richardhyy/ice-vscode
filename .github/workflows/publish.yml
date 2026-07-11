@@ -1,0 +1,61 @@
+name: Publish Extension
+
+# Auto-build and publish ICE to the VS Code Marketplace whenever a commit whose
+# message contains "Bump version to" (case-sensitive) lands on the main branch.
+# The published version is read from package.json (vsce), so the commit message
+# is only the trigger, not the source of the version number.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-extension
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - name: Detect version-bump commit (case-sensitive)
+        id: check
+        env:
+          # Passed via env (not inlined into the script) to avoid command injection.
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          if printf '%s\n' "$COMMIT_MSG" | grep -qF 'Bump version to'; then
+            echo "Trigger phrase found; will publish."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Trigger phrase not found; skipping publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  publish:
+    needs: gate
+    if: needs.gate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      # vsce runs the "vscode:prepublish" script (webpack production build)
+      # before packaging. --no-dependencies suits this webpack-bundled extension.
+      - name: Publish to VS Code Marketplace
+        run: npx --yes @vscode/vsce publish --no-dependencies
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
