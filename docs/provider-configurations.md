@@ -41,7 +41,7 @@ For any endpoint not listed — a self-hosted server, a proxy, or a new service 
 
 ### Optional Variables
 
-- `BaseURL`: The OpenAI-style base URL for your endpoint (e.g., `https://api.openai.com/v1`), including the version segment but *not* `/chat/completions`. Leave it empty to use the URL from your chosen `Preset`; set it to point at a custom, self-hosted, or proxied service. When set, it overrides the preset.
+- `BaseURL`: The OpenAI-style base URL for your endpoint (e.g., `https://api.openai.com/v1`), including the version segment but *not* `/chat/completions`. This is used **only when `Preset` is `Custom`**. A recognized preset always supplies its own endpoint, so a leftover `BaseURL` can never silently shadow the service you picked. Setting `BaseURL` in the config menu automatically switches `Preset` to `Custom` so your endpoint takes effect.
 
 - `Temperature`: A value between 0 and 1 that controls the randomness of the model's output. Higher values (e.g., 0.8) make the output more random, while lower values (e.g., 0.2) make it more focused and deterministic.
 
@@ -52,7 +52,7 @@ For any endpoint not listed — a self-hosted server, a proxy, or a new service 
 ## Understanding Configuration Variables
 
 ### API Configuration
-- `APIKey`, `Preset`, and (optionally) `BaseURL` work together to establish the connection to the LLM service. The `Preset` picks a known endpoint, `BaseURL` overrides it for custom services, and `APIKey` authenticates the request. Local presets need no key.
+- `APIKey`, `Preset`, and (optionally) `BaseURL` work together to establish the connection to the LLM service. The `Preset` picks a known endpoint and is authoritative when recognized; choose `Custom` and set `BaseURL` to point at your own service; `APIKey` authenticates the request. Local presets need no key.
 
 ### Model Behavior
 - `Model` selects the specific AI model to use. Different models can have varying capabilities, knowledge cutoff dates, and performance characteristics.
@@ -64,7 +64,7 @@ For any endpoint not listed — a self-hosted server, a proxy, or a new service 
 - `LogitBias` allows fine-grained control over the model's token selection process, which can be used to guide the style or content of the output.
 
 ### Advanced Usage
-- `BaseURL` lets you point the provider at any OpenAI-compatible endpoint that isn't a built-in preset — a self-hosted server, a corporate proxy, or a brand-new service.
+- `BaseURL` (with `Preset` set to `Custom`) lets you point the provider at any OpenAI-compatible endpoint that isn't a built-in preset — a self-hosted server, a corporate proxy, or a brand-new service.
 - `AdditionalHeaders` provides flexibility for working with different API implementations or adding custom metadata to requests.
 
 ## Best Practices

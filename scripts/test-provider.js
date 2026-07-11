@@ -16,7 +16,7 @@
  *   --provider <name>     Provider folder under providers/ (default: OpenAI_Compatible)
  *   --model <id>          Model id (default: $ICE_TEST_MODEL or gpt-5.5)
  *   --preset <name>       OpenAI-compatible preset, e.g. OpenAI|Ollama|Groq (default: $ICE_TEST_PRESET or OpenAI)
- *   --base-url <url>      OpenAI-style base URL, e.g. http://localhost:8788/v1 (default: $ICE_TEST_BASE_URL; overrides --preset)
+ *   --base-url <url>      OpenAI-style base URL, e.g. http://localhost:8788/v1 (default: $ICE_TEST_BASE_URL; implies the Custom preset)
  *   --host <baseUrl>      Legacy API host (default: $ICE_TEST_HOST) — kept for backward compatibility
  *   --path <path>         Legacy API path (default: $ICE_TEST_PATH) — kept for backward compatibility
  *   --prompt <text>       User prompt (default: a small reasoning question)
@@ -66,9 +66,12 @@ const args = parseArgs(process.argv.slice(2));
 
 const providerName = args.provider || 'OpenAI_Compatible';
 const model = args.model || process.env.ICE_TEST_MODEL || 'gpt-5.5';
-const preset = args.preset || process.env.ICE_TEST_PRESET || 'OpenAI';
 const baseUrl = args['base-url'] || process.env.ICE_TEST_BASE_URL || '';
 const host = args.host || process.env.ICE_TEST_HOST || '';
+// A custom Base URL or legacy host implies the "Custom" preset: a recognised
+// preset owns its own endpoint and would otherwise ignore these. Mirrors the
+// config menu's `@variableImplies BaseURL Preset=Custom`.
+const preset = args.preset || process.env.ICE_TEST_PRESET || ((baseUrl || host) ? 'Custom' : 'OpenAI');
 const apiPath = args.path || process.env.ICE_TEST_PATH || '';
 const prompt = args.prompt || 'What is 23 * 47? Reason it out briefly, then give the final answer.';
 const systemPrompt = args.system || 'You are a helpful assistant.';

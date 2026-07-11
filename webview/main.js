@@ -45,6 +45,11 @@ let _providerConfigWaiters = {};
 // Quick-tune overrides chosen in the composer, keyed by the (shadow) message id
 // -> {ConfigKey: value}. Materialised into a #config node when the message is sent.
 let _composerQuickConfig = {};
+// A pending "provider defaults changed" offer: { providerID, changes:{key:value} } or
+// null. Surfaced as a quiet notice at the end of the conversation; applying it inserts
+// a #config node so the change becomes part of this (trackable, forkable) conversation
+// rather than silently diverging from the global defaults.
+let _pendingConfigSync = null;
 // Tool-call orchestration state.
 let _toolAutoApprove = false;      // ice.tools.autoApprove (approval on when false)
 let _toolMaxAutoIterations = 8;    // ice.tools.maxAutoIterations (loop cap)
@@ -3623,6 +3628,9 @@ function renderConversation(shouldAnimateLastMessage = false) {
   // Surface non-blocking interleave suggestions and re-apply the selection.
   _renderInterleaveGhosts();
   _updateSelectionUI();
+
+  // Re-place any pending "provider defaults changed" notice for this conversation.
+  _renderConfigSyncNotice();
 }
 
 
@@ -3801,6 +3809,190 @@ function _adoptProvider(providerID) {
     }
     handleUpdateConfig(snapshot);
   });
+}
+
+
+// --- Provider defaults "sync into conversation" notice ---------------------
+// Editing a provider's *global* defaults (via the config menu) does not touch an
+// open conversation, whose config lives in its own #config nodes; that is what
+// keeps .chat files self-contained. To bridge the two without either silently
+// winning, a global change surfaces a quiet notice at the end of the conversation
+// offering to apply the change here; applying materialises a #config node so the
+// change becomes a visible, trackable, forkable part of this conversation.
+
+/**
+ * Handles a "provider defaults changed" signal from the host. Remembers the offer
+ * and renders (or clears) the notice.
+ * @param {string} providerID
+ * @param {Object} changes Map of changed config key -> new value.
+ */
+function _handleGlobalConfigChanged(providerID, changes) {
+  _pendingConfigSync = changes && Object.keys(changes).length > 0 ? { providerID, changes } : null;
+  _renderConfigSyncNotice();
+}
+
+/**
+ * The subset of the pending change that actually differs from what this
+ * conversation already uses, or null when there is nothing worth offering (no
+ * pending change, a different provider, or the values already match). Recomputed
+ * on demand so the notice stays honest as the conversation changes.
+ * @returns {Object|null}
+ */
+function _applicableConfigSyncChanges() {
+  if (!_pendingConfigSync) {
+    return null;
+  }
+  const { providerID, changes } = _pendingConfigSync;
+  const leafID = activePath.length > 0 ? activePath[activePath.length - 1] : null;
+  const effective = leafID != null ? getMessageConfig(leafID) : {};
+  const conversationProvider = effective.Provider || currentProvider;
+  if (conversationProvider !== providerID) {
+    // The change is for a provider this conversation isn't using, so it is irrelevant here.
+    return null;
+  }
+  const applicable = {};
+  for (const key in changes) {
+    if (key === "Provider") {
+      continue;
+    }
+    const current = effective[key] == null ? "" : String(effective[key]);
+    if (String(changes[key]) !== current) {
+      applicable[key] = changes[key];
+    }
+  }
+  return Object.keys(applicable).length > 0 ? applicable : null;
+}
+
+/** Renders the sync notice before the current editing message, or removes it. */
+function _renderConfigSyncNotice() {
+  const existing = document.getElementById("config-sync-notice");
+  if (existing) {
+    existing.remove();
+  }
+  const applicable = _applicableConfigSyncChanges();
+  if (!applicable) {
+    _pendingConfigSync = null;
+    return;
+  }
+  const notice = _createConfigSyncNotice(applicable);
+  // Sit just before the current editing message (the last message container),
+  // matching where an applied #config node would be inserted.
+  const containers = conversationContainer.querySelectorAll(":scope > .message-container");
+  const anchor = containers.length > 0 ? containers[containers.length - 1] : null;
+  if (anchor) {
+    conversationContainer.insertBefore(notice, anchor);
+  } else {
+    conversationContainer.appendChild(notice);
+  }
+}
+
+/**
+ * Builds the notice element: a slider icon, a summary of the changed keys, and
+ * Apply / Dismiss actions. Deliberately quiet so it informs without nagging.
+ * @param {Object} changes The applicable change map.
+ * @returns {HTMLElement}
+ */
+function _createConfigSyncNotice(changes) {
+  const el = document.createElement("div");
+  el.id = "config-sync-notice";
+  el.className = "config-sync-notice";
+
+  const icon = document.createElement("span");
+  icon.className = "config-sync-icon";
+  icon.innerHTML = icons.ICON_SLIDERS;
+  el.appendChild(icon);
+
+  const body = document.createElement("div");
+  body.className = "config-sync-body";
+
+  const title = document.createElement("div");
+  title.className = "config-sync-title";
+  title.textContent = "Provider defaults changed";
+  body.appendChild(title);
+
+  const detail = document.createElement("div");
+  detail.className = "config-sync-detail";
+  detail.textContent = `${Object.keys(changes).join(", ")}. Apply to this conversation?`;
+  body.appendChild(detail);
+
+  el.appendChild(body);
+
+  const actions = document.createElement("div");
+  actions.className = "config-sync-actions";
+
+  const dismissButton = document.createElement("button");
+  dismissButton.className = "config-sync-button";
+  dismissButton.textContent = "Dismiss";
+  dismissButton.addEventListener("click", _dismissConfigSync);
+  actions.appendChild(dismissButton);
+
+  const applyButton = document.createElement("button");
+  applyButton.className = "config-sync-button primary";
+  applyButton.textContent = "Apply";
+  applyButton.addEventListener("click", _applyConfigSync);
+  actions.appendChild(applyButton);
+
+  el.appendChild(actions);
+  return el;
+}
+
+/**
+ * Applies the pending change by inserting a #config node at the current point
+ * (as one undo step), preserving any in-progress composer draft across the
+ * re-render that the insertion triggers.
+ */
+function _applyConfigSync() {
+  const applicable = _applicableConfigSyncChanges();
+  _pendingConfigSync = null;
+  const existing = document.getElementById("config-sync-notice");
+  if (existing) {
+    existing.remove();
+  }
+  if (!applicable) {
+    return;
+  }
+  const draft = _captureComposerDraft();
+  _asUndoTransaction(() => {
+    handleUpdateConfig({ ...applicable });
+  });
+  _restoreComposerDraft(draft);
+}
+
+/** Dismisses the pending change without touching the conversation. */
+function _dismissConfigSync() {
+  _pendingConfigSync = null;
+  const existing = document.getElementById("config-sync-notice");
+  if (existing) {
+    existing.remove();
+  }
+}
+
+/** Reads the current composer draft text (the last editable message), if any. */
+function _captureComposerDraft() {
+  const containers = conversationContainer.querySelectorAll(":scope > .message-container");
+  const last = containers.length > 0 ? containers[containers.length - 1] : null;
+  if (!last) {
+    return null;
+  }
+  const view = EditorView.findFromDOM(last);
+  return view ? view.state.doc.toString() : null;
+}
+
+/** Restores a previously-captured composer draft into the current composer. */
+function _restoreComposerDraft(text) {
+  if (!text) {
+    return;
+  }
+  const containers = conversationContainer.querySelectorAll(":scope > .message-container");
+  const last = containers.length > 0 ? containers[containers.length - 1] : null;
+  if (!last) {
+    return;
+  }
+  const view = EditorView.findFromDOM(last);
+  if (view) {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+    view.focus();
+  }
 }
 
 
@@ -5255,6 +5447,11 @@ window.addEventListener("message", (event) => {
       }
       break;
     }
+    case "globalConfigChanged":
+      // The user edited this provider's global defaults; offer to bring the
+      // changes into the open conversation (see _handleGlobalConfigChanged).
+      _handleGlobalConfigChanged(message.providerID, message.changes);
+      break;
     case "loadSnippets":
       snippets = message.snippets;
       break;

@@ -19,6 +19,10 @@
 // @variableDynamic     Model
 // @variableSuggest     Preset=OpenAI,Ollama,LM Studio,OpenRouter,Groq,DeepSeek,Together,Mistral,xAI,Fireworks,Perplexity,Custom
 // @variableSuggest     ReasoningEffort=none,minimal,low,medium,high,xhigh
+// @variableHelp        Preset   Pick a known OpenAI-compatible service, or "Custom" to use your own Base URL.
+// @variableHelp        BaseURL  Used only when Preset is "Custom"; a known Preset sets the endpoint for you.
+// @variableHelp        Model    The model id to send requests to. Choose from the list or type your own.
+// @variableImplies     BaseURL  Preset=Custom
 // @quickOption         Model
 // @supportsTools       true
 // ==/ICEProvider==
@@ -79,14 +83,30 @@ function normalizeBaseURL(baseURL) {
 /**
  * Resolves the chat + models endpoints from the config. A friendly `Preset`
  * (e.g. "Ollama", "OpenRouter") selects a known base URL so users don't have to
- * hand-assemble a host/path; an explicit `BaseURL` overrides the preset for
- * custom or self-hosted services. Legacy `APIHost`/`APIPath` configs (from earlier
- * versions, or pinned inline in a .chat file) are still honoured for backward compatibility.
+ * hand-assemble a host/path. A *recognised* preset is authoritative: it is
+ * used as-is, so a leftover `BaseURL` can never silently shadow the service the
+ * user picked. Only the "Custom" preset (or an unrecognised name) defers to an
+ * explicit `BaseURL`, then to a legacy `APIHost`/`APIPath` (older configs or
+ * inline overrides), and finally to the OpenAI default.
  */
 function resolveEndpoints(config) {
-  // Legacy escape hatch: an explicit host/path (old configs, inline overrides)
-  // applies only when no modern BaseURL is set.
-  if (!hasText(config.BaseURL) && hasText(config.APIHost)) {
+  const presetName = hasText(config.Preset) ? config.Preset.trim() : DEFAULT_PRESET;
+  const known = PRESETS[presetName];
+
+  // A recognised preset owns the endpoint.
+  if (known) {
+    const base = normalizeBaseURL(known.baseURL);
+    return { chat: new URL('chat/completions', base), models: new URL('models', base) };
+  }
+
+  // "Custom" (or an unrecognised preset): the user supplies the endpoint.
+  if (hasText(config.BaseURL)) {
+    const base = normalizeBaseURL(config.BaseURL);
+    return { chat: new URL('chat/completions', base), models: new URL('models', base) };
+  }
+
+  // Legacy escape hatch: an explicit host/path from old configs or inline overrides.
+  if (hasText(config.APIHost)) {
     const legacyBase = config.APIHost.includes('://') ? config.APIHost : `https://${config.APIHost}`;
     const chatPath = hasText(config.APIPath) ? config.APIPath : '/v1/chat/completions';
     let modelsPath = chatPath.replace(/chat\/completions\/?$/, 'models');
@@ -96,10 +116,7 @@ function resolveEndpoints(config) {
     return { chat: new URL(chatPath, legacyBase), models: new URL(modelsPath, legacyBase) };
   }
 
-  const base = hasText(config.BaseURL)
-    ? normalizeBaseURL(config.BaseURL)
-    : normalizeBaseURL((PRESETS[config.Preset] || PRESETS[DEFAULT_PRESET]).baseURL);
-
+  const base = normalizeBaseURL(PRESETS[DEFAULT_PRESET].baseURL);
   return { chat: new URL('chat/completions', base), models: new URL('models', base) };
 }
 

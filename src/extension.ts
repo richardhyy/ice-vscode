@@ -428,7 +428,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
         const selectedProvider = selectedItem as ProviderQuickPickerItem;
         if (selectedProvider.provider) {
           if (selectedItem.label.startsWith('$(gear) Configure')) {
-            await this.providerManager.openProviderConfig(this.currentProvider!.id);
+            await this.configureProvider(this.currentProvider!.id);
           } else {
             this.selectProvider(selectedProvider.provider);
           }
@@ -436,6 +436,21 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(customProviderFolder));
         } 
       }
+    }
+  }
+
+  /**
+   * Opens the provider configuration menu (editing the provider's *global*
+   * defaults) and, if anything changed, invites the active conversation to adopt
+   * those changes. The invitation is surfaced inside the chat as a quiet notice
+   * the user can apply (materialising a #config node) or dismiss, bridging the
+   * global defaults and the per-conversation config without either silently
+   * overriding the other.
+   */
+  async configureProvider(providerID: string) {
+    const changes = await this.providerManager.openProviderConfig(providerID);
+    if (this.activeWebview && changes && Object.keys(changes).length > 0) {
+      this.activeWebview.webview.postMessage({ type: 'globalConfigChanged', providerID, changes });
     }
   }
 

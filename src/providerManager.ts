@@ -18,6 +18,15 @@ export interface ProviderOptionMeta {
   suggestions?: string[];
   dynamic?: boolean;
   quick?: boolean;
+  /** One-line help explaining the variable, shown in the config menu (@variableHelp). */
+  help?: string;
+  /**
+   * Coupled edits: when this variable is *set* (to a non-empty value) in the
+   * config menu, these other variables are set too (@variableImplies). Lets a
+   * provider keep related settings coherent, e.g. typing a custom Base URL
+   * implies switching the endpoint Preset to "Custom" so it actually takes effect.
+   */
+  implies?: { key: string; value: string }[];
 }
 
 /** A single selectable option value, optionally with a friendlier label/detail. */
@@ -185,8 +194,26 @@ export class ProviderManager {
     const header = code.slice(headerStartIndex, headerEndIndex);
     const lines = header.split('\n');
     const variableLineRegex = /^\/\/ @(\w+) +([^=]+?)(?:=(.+))?$/;
+    // Free-form help text and coupled-edit hints are parsed separately: their
+    // payload can contain '=' (URLs, target=value), which the generic key=value
+    // regex above would mis-split.
+    const helpLineRegex = /^\/\/ @variableHelp +(\S+) +(.+)$/;
+    const impliesLineRegex = /^\/\/ @variableImplies +(\S+) +(\S+?)=(.*)$/;
 
     for (const line of lines) {
+      const helpMatch = helpLineRegex.exec(line);
+      if (helpMatch) {
+        optionMetaFor(helpMatch[1].trim()).help = helpMatch[2].trim();
+        continue;
+      }
+
+      const impliesMatch = impliesLineRegex.exec(line);
+      if (impliesMatch) {
+        const meta = optionMetaFor(impliesMatch[1].trim());
+        (meta.implies || (meta.implies = [])).push({ key: impliesMatch[2].trim(), value: impliesMatch[3].trim() });
+        continue;
+      }
+
       const match = variableLineRegex.exec(line);
       if (!match) {
         continue;
@@ -624,81 +651,215 @@ export class ProviderManager {
     return providerIDs;
   }
 
-  public async openProviderConfig(providerID: string): Promise<void> {
+  /**
+   * Opens the provider configuration menu: a persistent QuickPick of the provider's
+   * settings, grouped by kind (credentials / model & behaviour / advanced). Editing
+   * a value keeps the menu open so several settings can be tuned in one pass, and
+   * each row shows its current value plus a one-line explanation (from @variableHelp).
+   *
+   * These edits change the provider's *global* defaults (used for new conversations),
+   * not the currently-open chat; the caller offers to sync any changes into the
+   * current conversation afterwards. Returns the non-secret settings that changed
+   * (key -> new value) so that offer can be made; secrets are stored but never returned.
+   */
+  public async openProviderConfig(providerID: string): Promise<{ [key: string]: string }> {
     const providerEntry = this.providers[providerID];
     if (!providerEntry) {
       console.error(`Provider not found: ${providerID}`);
-      return;
+      return {};
     }
-  
-    const config = await this.readProviderConfig(providerID);
+
+    // Read the provider's declared config *without* prompting for missing values:
+    // browsing settings shouldn't force an API-key entry. Non-secret values come
+    // from global state (falling back to header defaults); secrets are only probed
+    // for presence, never revealed.
+    let config: ProviderConfig = providerEntry.config;
+    if (!config) {
+      const providerPath = this.getProviderPath(providerID);
+      if (!fs.existsSync(providerPath)) {
+        return {};
+      }
+      config = await this.parseProviderConfig(fs.readFileSync(providerPath, 'utf8'));
+      providerEntry.config = config;
+    }
+
+    const prefix = providerID.split('@')[0] + '.';
+    const globalState = this.context.globalState;
+    const secrets = this.context.secrets;
     const optionsMeta = config.options || {};
+    const changed: { [key: string]: string } = {};
 
     const hasOptions = (key: string): boolean => {
       const meta = optionsMeta[key];
-      return !!meta && ((meta.suggestions && meta.suggestions.length > 0) || meta.dynamic === true);
+      return !!meta && ((!!meta.suggestions && meta.suggestions.length > 0) || meta.dynamic === true);
     };
-  
-    const configEntries = [
-      ...Object.entries(config.secureVariables),
-      ...Object.entries(config.requiredVariables),
-      ...Object.entries(config.optionalVariables),
-    ];
-  
-    const quickPickItems: vscode.QuickPickItem[] = [
-      ...configEntries.map(([key, value]) => ({
-        label: key,
-        description: key in config.secureVariables ? (value && value.length > 0 ? '*****' : 'Not set') : (value || ''),
-        // A caret hints that this entry offers a list of values to pick from.
-        detail: hasOptions(key) ? '$(chevron-down) Choose from a list' : undefined,
-      })),
-      { kind: vscode.QuickPickItemKind.Separator, label: '' },
-      {
-        label: 'Open Provider Script',
-        description: 'Open the provider script for editing',
-      },
-    ];
-  
-    const selectedItem = await vscode.window.showQuickPick(quickPickItems, {
-      placeHolder: 'Select a config entry to edit or open the provider script',
-      ignoreFocusOut: true,
-    });
-  
-    if (selectedItem) {
-      if (selectedItem.label === 'Open Provider Script') {
-        await this.openProviderScript(providerID);
-      } else {
-        const [key, oldValue] = configEntries.find(([k]) => k === selectedItem.label)!;
+
+    // Current non-secret value: the user's global setting, else the header default.
+    const currentValue = (key: string): string => {
+      const stored = globalState.get(prefix + key) as string | undefined;
+      if (stored !== undefined && stored !== null) {
+        return String(stored);
+      }
+      const fallback = key in config.requiredVariables ? config.requiredVariables[key]
+        : key in config.optionalVariables ? config.optionalVariables[key] : null;
+      return fallback == null ? '' : String(fallback);
+    };
+
+    const secureKeys = Object.keys(config.secureVariables);
+    const requiredKeys = Object.keys(config.requiredVariables);
+    const optionalKeys = Object.keys(config.optionalVariables);
+    const OPEN_SCRIPT = '__openScript';
+
+    // Persists an edit to global state / secret storage and records non-secret
+    // changes (plus any coupled edits declared via @variableImplies) so the
+    // caller can offer to sync them into the current conversation.
+    const applyEdit = async (key: string, value: string) => {
+      if (key in config.secureVariables) {
+        await secrets.store(prefix + key, value); // Secrets stay in secret storage; never reported.
+        return;
+      }
+      await globalState.update(prefix + key, value);
+      changed[key] = value;
+
+      const implies = optionsMeta[key] && optionsMeta[key].implies;
+      if (implies && value.trim().length > 0) {
+        for (const rule of implies) {
+          if (currentValue(rule.key) !== rule.value) {
+            await globalState.update(prefix + rule.key, rule.value);
+            changed[rule.key] = rule.value;
+          }
+        }
+      }
+    };
+
+    type ConfigItem = vscode.QuickPickItem & { _key?: string; _action?: string };
+
+    // Rebuilds the grouped item list, reflecting the latest stored values.
+    const buildItems = async (): Promise<ConfigItem[]> => {
+      const secureSet: { [key: string]: boolean } = {};
+      await Promise.all(secureKeys.map(async (key) => { secureSet[key] = !!(await secrets.get(prefix + key)); }));
+
+      const rowFor = (key: string): ConfigItem => {
         const isSecure = key in config.secureVariables;
+        let description: string;
+        if (isSecure) {
+          description = secureSet[key] ? '••••••••' : 'Not set';
+        } else {
+          const value = currentValue(key);
+          if (value.trim().length === 0) {
+            description = 'Not set';
+          } else {
+            const oneLine = value.replace(/\s+/g, ' ').trim();
+            description = oneLine.length > 60 ? oneLine.slice(0, 57) + '…' : oneLine;
+          }
+        }
+        const help = optionsMeta[key] && optionsMeta[key].help;
+        let detail: string | undefined;
+        if (hasOptions(key)) {
+          detail = '$(chevron-down) ' + (help || 'Choose from a list');
+        } else if (help) {
+          detail = help;
+        }
+        return { label: key, description, detail, _key: key };
+      };
+
+      const items: ConfigItem[] = [];
+      const group = (label: string, keys: string[]) => {
+        if (keys.length === 0) {
+          return;
+        }
+        items.push({ kind: vscode.QuickPickItemKind.Separator, label });
+        for (const key of keys) {
+          items.push(rowFor(key));
+        }
+      };
+      group('Credentials', secureKeys);
+      group('Model & behaviour', requiredKeys);
+      group('Advanced', optionalKeys);
+      items.push({ kind: vscode.QuickPickItemKind.Separator, label: '' });
+      items.push({ label: '$(go-to-file) Open Provider Script', description: 'Edit the raw provider code', _action: OPEN_SCRIPT });
+      return items;
+    };
+
+    const quickPick = vscode.window.createQuickPick<ConfigItem>();
+    quickPick.title = `Configure ${config.info['name'] || providerID}`;
+    quickPick.placeholder = 'Edit a setting. Changes apply to new conversations';
+    quickPick.ignoreFocusOut = true;
+    quickPick.matchOnDescription = true;
+    quickPick.matchOnDetail = true;
+    quickPick.items = await buildItems();
+
+    let editing = false;       // true while a sub-editor is up, so its induced hide doesn't close the menu
+    let openScriptAfter = false;
+    let activeKey: string | null = null;
+
+    await new Promise<void>((resolve) => {
+      quickPick.onDidHide(() => {
+        if (!editing) {
+          resolve();
+        }
+      });
+
+      quickPick.onDidAccept(async () => {
+        const selected = quickPick.selectedItems[0];
+        if (!selected) {
+          return;
+        }
+        if (selected._action === OPEN_SCRIPT) {
+          openScriptAfter = true;
+          resolve();
+          return;
+        }
+        const key = selected._key;
+        if (!key) {
+          return; // separator or non-editable row
+        }
+
+        activeKey = key;
+        const isSecure = key in config.secureVariables;
+
+        editing = true;
+        quickPick.hide(); // VS Code shows one input at a time; hide so the sub-editor is clean
 
         let newValue: string | undefined;
         if (!isSecure && hasOptions(key)) {
           // Offer a picked list (suggested values plus any the provider lists at
           // runtime), while still allowing a free-form custom value.
-          newValue = await this.promptForOptionValue(providerID, key, oldValue || '', optionsMeta[key]);
+          newValue = await this.promptForOptionValue(providerID, key, currentValue(key), optionsMeta[key]);
         } else {
           newValue = await vscode.window.showInputBox({
+            title: `Configure ${config.info['name'] || providerID}`,
             prompt: `Enter value for ${key}`,
-            value: oldValue || '',
+            value: isSecure ? '' : currentValue(key),
             password: isSecure,
             ignoreFocusOut: true,
           });
         }
-  
+
         if (newValue !== undefined) {
-          if (isSecure) {
-            config.secureVariables[key] = newValue;
-            await this.context.secrets.store(providerID.split('@')[0] + '.' + key, newValue);
-          } else if (key in config.requiredVariables) {
-            config.requiredVariables[key] = newValue;
-            await this.context.globalState.update(providerID.split('@')[0] + '.' + key, newValue);
-          } else if (key in config.optionalVariables) {
-            config.optionalVariables[key] = newValue;
-            await this.context.globalState.update(providerID.split('@')[0] + '.' + key, newValue);
-          }
+          await applyEdit(key, newValue);
         }
-      }
+
+        // Return to the menu with the just-edited row still focused.
+        quickPick.items = await buildItems();
+        const restored = quickPick.items.find((item) => item._key === activeKey);
+        if (restored) {
+          quickPick.activeItems = [restored];
+        }
+        editing = false;
+        quickPick.show();
+      });
+
+      quickPick.show();
+    });
+
+    quickPick.dispose();
+
+    if (openScriptAfter) {
+      await this.openProviderScript(providerID);
     }
+
+    return changed;
   }
 
   /**
