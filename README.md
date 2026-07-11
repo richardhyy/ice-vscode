@@ -112,38 +112,9 @@ Right-click on a message editor and select "Manage Snippets" to view, edit, and 
 
 ![Message Snippet](docs/images/snippet.png)
 
-### Placeholders and Variables
+### System Prompt Variables
 
-ICE supports the use of placeholders and variables in both user messages/prompts and system prompts.
-
-#### User Messages and Prompts
-
-You can use variables in your user messages and prompts for more flexible interactions. Here's how:
-
-1. Declare variables in a configuration node:
-   - Right-click a message and select "Insert Config Update"
-   - In the configuration, declare variables using the format: `$name = Variable value...`
-
-2. Use variables in your messages:
-   - In user messages, insert variable placeholders by typing `{{ name }}`
-   - Autocompletion is available for quick insertion
-
-Example:
-```
-$Doc = My name is Richard.
-$TargetLanguage = Japanese.
-```
-
-User message:
-```
-Translate "{{ Doc }}" to {{ TargetLanguage }}.
-```
-
-![Variables](docs/images/variables.png)
-
-#### System Prompts
-
-For system prompts, ICE supports various **environment variables** that can be used to include dynamic information. These are particularly useful for providing context-aware information to LLMs.
+ICE supports various **environment variables** in system prompts. These are useful for providing dynamic, context-aware information to LLMs.
 
 | Variable | Description | Example Output |
 |----------|-------------|----------------|

@@ -122,13 +122,46 @@ function tokenize(text) {
   return merged;
 }
 
-function sseChunk(delta, finishReason) {
+function sseChunk(delta, finishReason, model) {
   const payload = {
     id: 'mockcmpl-' + Date.now().toString(36),
     object: 'chat.completion.chunk',
     created: Math.floor(Date.now() / 1000),
-    model: 'mock',
+    model: model || 'mock',
     choices: [{ index: 0, delta, finish_reason: finishReason || null }],
+  };
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
+/** Rough token estimate (~4 chars/token) so the mock can report plausible usage. */
+function estimateTokens(text) {
+  return Math.max(1, Math.round((text || '').length / 4));
+}
+
+/** Flattens OpenAI message content (string or content-part array) to plain text. */
+function messageText(content) {
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content.map((part) => (part && typeof part.text === 'string' ? part.text : '')).join(' ');
+  }
+  return '';
+}
+
+/** Final usage-only chunk (empty choices), matching stream_options.include_usage. */
+function usageChunk(model, promptTokens, completionTokens) {
+  const payload = {
+    id: 'mockcmpl-' + Date.now().toString(36),
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model: model || 'mock',
+    choices: [],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: promptTokens + completionTokens,
+    },
   };
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
@@ -143,6 +176,8 @@ function pickScenario(model) {
 
 function streamCompletion(req, res, body) {
   const scenario = pickScenario(body && body.model);
+  const model = (body && body.model) || 'mock';
+  const includeUsage = !!(body && body.stream_options && body.stream_options.include_usage);
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',
@@ -157,6 +192,12 @@ function streamCompletion(req, res, body) {
   for (const chunk of tokenize(scenario.content)) {
     events.push({ content: chunk });
   }
+
+  // Plausible token counts for the optional usage chunk.
+  const promptTokens = (body && Array.isArray(body.messages))
+    ? body.messages.reduce((sum, m) => sum + estimateTokens(messageText(m.content)), 0)
+    : 0;
+  const completionTokens = estimateTokens(scenario.content) + estimateTokens(scenario.reasoning);
 
   let index = 0;
   let timer = null;
@@ -177,12 +218,15 @@ function streamCompletion(req, res, body) {
       return;
     }
     if (index < events.length) {
-      res.write(sseChunk(events[index]));
+      res.write(sseChunk(events[index], null, model));
       index++;
       timer = setTimeout(next, DELAY_MS);
       return;
     }
-    res.write(sseChunk({}, 'stop'));
+    res.write(sseChunk({}, 'stop', model));
+    if (includeUsage) {
+      res.write(usageChunk(model, promptTokens, completionTokens));
+    }
     res.write('data: [DONE]\n\n');
     res.end();
   }

@@ -169,6 +169,12 @@ child.on('message', (message) => {
     }
     case 'done':
       console.log(`\nDone. reasoning: ${reasoningText.length} chars, answer: ${contentText.length} chars`);
+      if (message.model) {
+        console.log(`   model: ${message.model}`);
+      }
+      if (message.usage) {
+        console.log(`   usage: ${JSON.stringify(message.usage)}`);
+      }
       if (reasoningText.length === 0) {
         console.log('   (no reasoning stream received — model/endpoint may not emit reasoning)');
       }

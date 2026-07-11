@@ -22,8 +22,6 @@
     --blockquote-border-color: var(--vscode-textBlockQuote-border);
     --code-color: var(--vscode-textPreformat-foreground);
     --table-border-color: var(--vscode-editorWidget-border);
-    --user-message-placeholder-background-color: color-mix(in srgb, var(--user-message-background-color) 80%, var(--code-block));
-    --user-message-placeholder-color: var(--user-message-text-color);
     --button-background-color: var(--vscode-button-background);
     --button-text-color: var(--vscode-button-foreground);
     --button-primary-background-color: var(--vscode-button-background);
@@ -254,54 +252,6 @@ hr {
     margin: 1em 0;
 }
 
-.variable-wrapper {
-    display: inline-block;
-    position: relative;
-    vertical-align: baseline;
-}  
-
-.variable-placeholder {
-    display: inline-block;
-    font-size: 0.85em;
-    padding: 0 4px;
-    border: 1px solid var(--user-message-placeholder-color);
-    border-radius: var(--border-radius-small);
-    color: var(--user-message-placeholder-color);
-    background-color: var(--user-message-placeholder-background-color);
-    vertical-align: baseline;
-}
-
-.variable-delimiter {
-    position: absolute;
-    top: 0;
-    color: transparent;
-    user-select: text;
-    pointer-events: none;
-}
-
-.variable-delimiter:first-child {
-    left: 0;
-}
-
-.variable-delimiter:last-child {
-    right: 0;
-}
-
-.preserve-whitespace .variable-wrapper {
-    display: inline;
-    position: static;
-}
-  
-.preserve-whitespace .variable-placeholder {
-    display: inline;
-    font-size: inherit;
-}
-
-.preserve-whitespace .variable-delimiter {
-    position: static;
-    display: inline;
-}  
-
 @keyframes fadeIn {
     0% {
         opacity: 0;
@@ -446,10 +396,6 @@ hr {
     color: var(--config-key-color);
 }
 
-.config-content .config-key.variable-name {
-    color: var(--accent-color);
-}
-
 .config-content .config-key::after {
     content: ": ";
     color: var(--config-key-separator-color);
@@ -570,6 +516,7 @@ hr {
 /* The preview is a passive snapshot: silence per-message affordances. */
 .branch-preview-layer .sibling-switcher,
 .branch-preview-layer .selection-check,
+.branch-preview-layer .message-meta-header,
 .branch-preview-layer .operation-bar {
     display: none !important;
 }
@@ -845,6 +792,147 @@ hr {
     .typing-indicator .typing-dot {
         animation: none;
         opacity: 0.5;
+    }
+}
+
+/*
+ * Message metadata caption. Shown above an assistant reply (top-left, outside the
+ * bubble): the model that responded and a short timestamp. It is absolutely
+ * positioned so it neither widens the node column (the selection checkbox stays
+ * on the bubble corner) nor pushes the reply down. Quiet by default — muted and
+ * small — because this is rarely-inspected metadata; the reply itself leads.
+ */
+.message-meta-header {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    max-width: 90vw;
+    margin-bottom: 3px;
+    padding: 1px 3px;
+    border-radius: var(--border-radius);
+    font-size: 0.72em;
+    line-height: 1.3;
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground);
+    cursor: default;
+    user-select: none;
+    transition: color 0.15s var(--default-cubic-bezier);
+}
+
+.message-meta-header:hover,
+.message-meta-header:focus-visible {
+    color: var(--vscode-foreground);
+}
+
+.message-meta-header:focus-visible {
+    outline: 1px solid var(--accent-color);
+    outline-offset: 1px;
+}
+
+.message-meta-header .mmh-model {
+    font-weight: 600;
+    max-width: 24em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.message-meta-header .mmh-sep {
+    opacity: 0.55;
+}
+
+.message-meta-header .mmh-time {
+    font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Stale marker: a small "modified since" dot (the same metaphor as an editor's
+ * dirty indicator). Deliberately calm — no alarm colour — because staleness is
+ * informative and clears itself the moment the reply is regenerated. The full
+ * explanation lives in the popover and the caption's aria-label.
+ */
+.mmh-stale-dot {
+    flex: 0 0 auto;
+    width: 0.5em;
+    height: 0.5em;
+    border-radius: 50%;
+    background-color: color-mix(in srgb, var(--vscode-descriptionForeground) 72%, transparent);
+}
+
+/* Extra breathing room above assistant replies so the floating caption sits
+   clear of the previous message. */
+.message-container.assistant {
+    margin-top: 0.9em;
+}
+
+/* --- Metadata detail popover (revealed on hover / keyboard focus) --------- */
+.mmh-popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 6;
+    min-width: 210px;
+    max-width: min(360px, 80vw);
+    padding: 8px 10px;
+    border-radius: var(--border-radius-large);
+    background-color: var(--vscode-editorHoverWidget-background, var(--config-card-background-color));
+    color: var(--vscode-editorHoverWidget-foreground, var(--primary-color));
+    border: 1px solid var(--vscode-editorHoverWidget-border, var(--quaternary-color));
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--shadow-color) 45%, transparent);
+    font-size: 0.95em;
+    line-height: 1.4;
+    white-space: normal;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-2px);
+    transition: opacity 0.12s var(--default-cubic-bezier),
+                transform 0.12s var(--default-cubic-bezier);
+}
+
+.message-meta-header:hover .mmh-popover,
+.message-meta-header:focus-within .mmh-popover {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0);
+}
+
+.mmh-fields {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 3px 14px;
+    margin: 0;
+}
+
+.mmh-fields dt {
+    color: var(--vscode-descriptionForeground);
+    white-space: nowrap;
+}
+
+.mmh-fields dd {
+    margin: 0;
+    word-break: break-word;
+}
+
+.mmh-stale-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5em;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid color-mix(in srgb, var(--vscode-editorHoverWidget-border, var(--quaternary-color)) 70%, transparent);
+    color: var(--vscode-descriptionForeground);
+}
+
+.mmh-stale-note .mmh-stale-dot {
+    margin-top: 0.35em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .message-meta-header,
+    .mmh-popover {
+        transition: none;
     }
 }
 

@@ -13,6 +13,24 @@ export interface ProviderConfig {
   optionalVariables: { [key: string]: string | null };
 }
 
+/** Token usage a provider may report on completion (all fields optional). */
+export interface ProviderUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+/**
+ * Metadata a provider may optionally attach to a completed response. Everything
+ * here is optional: `model` and `usage` get first-class display, while `extra`
+ * lets a provider store any additional fields it wants to surface later.
+ */
+export interface ProviderCompletionMeta {
+  model?: string;
+  usage?: ProviderUsage;
+  extra?: Record<string, any>;
+}
+
 export interface Provider {
   id: string;
   info: { [key: string]: string };
@@ -22,7 +40,7 @@ export interface Provider {
     optionalVariables: string[],
   };
   getCompletion: (messageTrail: ChatMessage[], configOverride: { [key: string]: string }, 
-                  onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string) => void) 
+                  onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string, meta?: ProviderCompletionMeta) => void) 
                   => Promise<string>;
   requestCancel: (requestID: string) => void;
 }
@@ -69,7 +87,7 @@ export class ProviderManager {
       child: child_process.ChildProcess | undefined,
     }
   } = {};
-  private pendingRequests: Map<string, { onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string) => void }> = new Map();
+  private pendingRequests: Map<string, { onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string, meta?: ProviderCompletionMeta) => void }> = new Map();
 
   constructor(private context: vscode.ExtensionContext) {
     // Create custom provider directory if it doesn't exist
@@ -319,10 +337,10 @@ export class ProviderManager {
           request.onStream(partialText, reasoningText);
         }
       } else if (message.type === 'done') {
-        const { requestID, finalText } = message;
+        const { requestID, finalText, model, usage, metadata } = message;
         const request = this.pendingRequests.get(requestID);
         if (request) {
-          request.onCompletion(finalText);
+          request.onCompletion(finalText, { model, usage, extra: metadata });
           this.pendingRequests.delete(requestID);
         }
       } else if (message.type === 'error') {
@@ -374,7 +392,7 @@ export class ProviderManager {
         optionalVariables: Object.keys(config.optionalVariables),
       },
       getCompletion: async (messageTrail: ChatMessage[], configOverride: { [key: string]: string },
-                            onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string) => void) => {        
+                            onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string, meta?: ProviderCompletionMeta) => void) => {        
         if (!this.providers[providerID].child) {
           // Provider is not initialized yet; resolve its script path and start it.
           await this.initializeProvider(providerID, this.getProviderPath(providerID));

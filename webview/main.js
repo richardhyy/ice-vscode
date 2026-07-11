@@ -21,6 +21,10 @@ const ruler = new Ruler(conversationContainer, rulerElement);
 let flatMessages = {};
 let messageIDWithChildren = {}; // {messageID: [childID1, childID2, ...]}
 let activePath = [];
+// IDs of assistant replies whose upstream context was edited after they were
+// generated (see _computeStaleMessages). Derived at render time from message
+// timestamps — never persisted — and surfaced as a quiet per-message marker.
+let _staleMessageIDs = new Set();
 let currentProvider = null;
 let availableProviders = [];
 let providerConfigKeys = {}; // {providerID: [configKey1, configKey2, ...]}
@@ -269,6 +273,11 @@ function _handleMessageSubmit(content, message) {
     // Edit the message if it's an existing message
     message.content = content;
     message.attachments = _editingMessageAttachments[message.id] || [];
+    // Bump the local timestamp to match the edit the host is about to persist
+    // (ChatHistoryManager.editMessage stamps its own). Keeping the in-memory copy
+    // current is what lets downstream replies show as stale straight away, before
+    // any reload.
+    message.timestamp = new Date().toISOString();
     vscode.postMessage({
       type: "editMessage",
       messageID: message.id,
@@ -740,14 +749,6 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
     messageContentEditing.classList.add("message-content-editing");
     messageContent.appendChild(messageContentEditing);
 
-    let variableKeys = [];
-    if (message.role === "user") {  // Only user messages can have variables
-      const configObj = getMessageConfig(message.isShadow ? message.parentID : message.id);
-      variableKeys = Object.keys(configObj).filter((key) => key.startsWith("$")).map((key) => key.slice(1));
-    }
-
-    console.log("Config keys", variableKeys);
-
     // Create a CodeMirror editor instance
     const codeMirrorContainer = document.createElement("div");
     codeMirrorContainer.classList.add("codemirror-container");
@@ -760,31 +761,22 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
     const placeholderText = message.role === "user" ? "Type a message..." : "Type a response...";
     const editor = _renderEditor(codeMirrorContainer, message.id, message.content, placeholderText, 
     (context) => {
-      const before = context.matchBefore(/\/(\w*)|(\{\{?\s*\w*)|(\$\w*)|(\w+)/);
+      const before = context.matchBefore(/\/(\w*)|(\w+)/);
       if (!before) {
         return null;
       }
-    
-      const options = [
-        ...Object.entries(snippets).map(([completion, content]) => ({
-          label: "/" + completion,
-          apply: content,
-          type: "text",
-        })),
-        ...variableKeys.map((key) => ({
-          label: "{{ " + key + " }}",
-          apply: "{{ " + key + " }}",
-          type: "variable",
-        }))
-      ];
-      
-      const value = {
+
+      const options = Object.entries(snippets).map(([completion, content]) => ({
+        label: "/" + completion,
+        apply: content,
+        type: "text",
+      }));
+
+      return {
         from: before.from,
         options: options,
-        validFor: /^(\/\w*|\{\{?\s*\w*|\$\w*|\w*)$/,
+        validFor: /^(\/\w*|\w*)$/,
       };
-      console.log("Autocompletion value", value);
-      return value;
     }, 
     (content) => {
       _handleMessageSubmit(content, message);
@@ -888,39 +880,6 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
       clippedContent.innerHTML = renderedContent;
       markdownContent.appendChild(clippedContent);
     } else {
-      if (message.role === "user") {
-        const config = getMessageConfig(message.id);
-        const variableKeyValueMap = Object.entries(config).filter(([key, value]) => key.startsWith("$")).map(([key, value]) => [key.slice(1), value]);
-        
-        function processVariables(content, isCodeBlock) {
-          const variableRegex = /{{\s*([^\s]+)\s*}}/g;
-          return content.replace(variableRegex, (match, variableName) => {
-            if (variableKeyValueMap.find(([key, value]) => key === variableName)) {
-              if (isCodeBlock) {
-                // For code blocks, we don't add any HTML, just return the original match
-                return match;
-              } else {
-                // For non-code blocks, we use the HTML structure
-                return `<span class="variable-wrapper" title="${match}"><span class="variable-delimiter">{{</span><span class="variable-placeholder">${variableName}</span><span class="variable-delimiter">}}</span></span>`;
-              }
-            } else {
-              return match;
-            }
-          });
-        }
-        
-        const codeBlockRegex = /(<pre><code[^>]*>)([\s\S]*?)(<\/code><\/pre>)/gi;
-        
-        renderedContent = renderedContent.replace(codeBlockRegex, (match, openTag, codeContent, closeTag) => {
-          // For code blocks, we process variables but don't add HTML structure
-          const processedCodeContent = processVariables(codeContent, true);
-          // We still wrap the content in preserve-whitespace, but don't add any other HTML
-          return `${openTag}<span class="preserve-whitespace">${processedCodeContent}</span>${closeTag}`;
-        });
-        
-        // Process variables outside of code blocks
-        renderedContent = processVariables(renderedContent, false);
-      }
       markdownContent.innerHTML = renderedContent;
       if (isTypingPlaceholder) {
         markdownContent.appendChild(_createTypingIndicator());
@@ -956,6 +915,191 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
       _renderAttachments(message.id, message.attachments, false, attachmentContainer);
     }
   }
+}
+
+
+/** Strips the id suffix from a provider id ("Claude@built-in" -> "Claude"). */
+function _providerLabel(providerID) {
+  return providerID ? String(providerID).split("@")[0] : "";
+}
+
+/** Best-effort model label for a reply that stored none (e.g. older replies). */
+function _deriveModelLabel(message) {
+  const config = getMessageConfig(message.id);
+  return config.Model || _providerLabel(config.Provider);
+}
+
+/** Truncates a string for compact display. */
+function _truncateText(text, max) {
+  const str = String(text);
+  return str.length > max ? str.slice(0, max - 1).trimEnd() + "\u2026" : str;
+}
+
+/** Short timestamp: time-only when today, otherwise a short (year-aware) date. */
+function _formatShortDateTime(timestamp) {
+  const date = new Date(timestamp);
+  if (isNaN(date.getTime())) {
+    return "";
+  }
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+  return date.toLocaleDateString(
+    [],
+    date.getFullYear() === now.getFullYear()
+      ? { month: "short", day: "numeric" }
+      : { year: "numeric", month: "short", day: "numeric" }
+  );
+}
+
+/** Full, unambiguous timestamp for the hover detail. */
+function _formatFullDateTime(timestamp) {
+  const date = new Date(timestamp);
+  return isNaN(date.getTime()) ? "" : date.toLocaleString();
+}
+
+const _STALE_EXPLANATION =
+  "[Context changed] An earlier message was edited after this reply was generated.";
+
+/**
+ * Builds the quiet metadata caption shown above an assistant reply (top-left,
+ * outside the bubble): the model that responded and a short timestamp. It is a
+ * focusable, hoverable affordance that reveals a fuller detail popover — the
+ * "rarely inspected" details (provider, config, token usage) plus the staleness
+ * note live there, so the always-visible caption stays minimal. The popover is
+ * built lazily on first hover/focus to keep long conversations light.
+ */
+function _createMessageMetaHeader(message) {
+  const metadata = (message.customFields && message.customFields.metadata) || {};
+  const isStale = _staleMessageIDs.has(message.id);
+
+  const header = document.createElement("div");
+  header.className = "message-meta-header";
+  if (isStale) {
+    header.classList.add("stale");
+  }
+  header.tabIndex = 0;
+  header.setAttribute("role", "button");
+  header.setAttribute("aria-haspopup", "true");
+
+  const model = metadata.model || _deriveModelLabel(message) || "Assistant";
+  const modelEl = document.createElement("span");
+  modelEl.className = "mmh-model";
+  modelEl.textContent = model;
+  header.appendChild(modelEl);
+
+  const shortTime = _formatShortDateTime(message.timestamp);
+  if (shortTime) {
+    const sep = document.createElement("span");
+    sep.className = "mmh-sep";
+    sep.setAttribute("aria-hidden", "true");
+    sep.textContent = "\u00b7";
+    header.appendChild(sep);
+
+    const timeEl = document.createElement("span");
+    timeEl.className = "mmh-time";
+    timeEl.textContent = shortTime;
+    header.appendChild(timeEl);
+  }
+
+  if (isStale) {
+    const dot = document.createElement("span");
+    dot.className = "mmh-stale-dot";
+    dot.setAttribute("aria-hidden", "true");
+    header.appendChild(dot);
+  }
+
+  header.setAttribute(
+    "aria-label",
+    "Reply by " + model + (shortTime ? ", " + _formatFullDateTime(message.timestamp) : "") +
+      (isStale ? ". " + _STALE_EXPLANATION : "")
+  );
+
+  // Build the detail popover only when the caption is actually inspected.
+  let popoverBuilt = false;
+  const ensurePopover = () => {
+    if (popoverBuilt) {
+      return;
+    }
+    popoverBuilt = true;
+    header.appendChild(_createMetaPopover(message, metadata, isStale));
+  };
+  header.addEventListener("pointerenter", ensurePopover);
+  header.addEventListener("focus", ensurePopover);
+
+  return header;
+}
+
+/** The hover/focus detail popover: model, when, provider, config, tokens, staleness. */
+function _createMetaPopover(message, metadata, isStale) {
+  const popover = document.createElement("div");
+  popover.className = "mmh-popover";
+  popover.setAttribute("role", "tooltip");
+
+  const config = getMessageConfig(message.id);
+  const rows = [];
+  rows.push(["Model", metadata.model || _deriveModelLabel(message) || "\u2014"]);
+  if (config.Provider) {
+    rows.push(["Provider", _providerLabel(config.Provider)]);
+  }
+  const fullTime = _formatFullDateTime(message.timestamp);
+  if (fullTime) {
+    rows.push(["When", fullTime]);
+  }
+  if (config.Temperature !== undefined && config.Temperature !== "") {
+    rows.push(["Temperature", String(config.Temperature)]);
+  }
+  const maxTokens = config.MaxTokensToSample || config.MaxTokens;
+  if (maxTokens !== undefined && maxTokens !== "") {
+    rows.push(["Max tokens", String(maxTokens)]);
+  }
+  const usage = metadata.usage;
+  if (usage) {
+    const parts = [];
+    if (usage.promptTokens != null) {
+      parts.push(usage.promptTokens + " in");
+    }
+    if (usage.completionTokens != null) {
+      parts.push(usage.completionTokens + " out");
+    }
+    if (usage.totalTokens != null) {
+      parts.push(usage.totalTokens + " total");
+    }
+    if (parts.length) {
+      rows.push(["Tokens", parts.join(" \u00b7 ")]);
+    }
+  }
+  if (config.SystemPrompt) {
+    rows.push(["System prompt", _truncateText(config.SystemPrompt, 72)]);
+  }
+
+  const list = document.createElement("dl");
+  list.className = "mmh-fields";
+  for (const [key, value] of rows) {
+    const dt = document.createElement("dt");
+    dt.textContent = key;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    list.appendChild(dt);
+    list.appendChild(dd);
+  }
+  popover.appendChild(list);
+
+  if (isStale) {
+    const note = document.createElement("div");
+    note.className = "mmh-stale-note";
+    const noteDot = document.createElement("span");
+    noteDot.className = "mmh-stale-dot";
+    noteDot.setAttribute("aria-hidden", "true");
+    note.appendChild(noteDot);
+    const noteText = document.createElement("span");
+    noteText.textContent = _STALE_EXPLANATION;
+    note.appendChild(noteText);
+    popover.appendChild(note);
+  }
+
+  return popover;
 }
 
 
@@ -1017,16 +1161,6 @@ function _updateAvailableConfigKeys(providerID, editorContainer, configKeyContai
       type: type,
       detail: detail
     });
-  }
-
-  // Add variable prefix key
-  createKeyToken("$", "New Variable", "syntax", "New variable");
-
-  // Add variables
-  for (let key in getMessageConfig(messageID)) {
-    if (key.startsWith("$")) {
-      createKeyToken(key, "Variable", "variable");
-    }
   }
 
   for (let group of Object.keys(providerConfigKeys[providerID])) {
@@ -1164,9 +1298,6 @@ function _renderConfigNode(messageNode, message, clipContent, editing) {
 
         const keyElement = document.createElement("span");
         keyElement.classList.add("config-key");
-        if (key.startsWith("$")) {
-          keyElement.classList.add("variable-name");
-        }
         keyElement.textContent = key;
         rowElement.appendChild(keyElement);
 
@@ -1532,6 +1663,14 @@ function createMessageContainer(message, editing = false, shouldAnimate = false)
     }
   }
 
+  // Assistant replies carry a quiet metadata caption (model + short time, with
+  // details on hover). It is appended last so the message node stays the
+  // node-container's firstElementChild (delete/preview logic relies on that),
+  // and CSS floats it just above the bubble — outside the message.
+  if (message.role === "assistant" && !message.isShadow) {
+    messageNodesContainer.appendChild(_createMessageMetaHeader(message));
+  }
+
   return messageContainer;
 }
 
@@ -1595,12 +1734,95 @@ function _updateRulerMarks() {
   });
 }
 
+// --- Context checksum & staleness ------------------------------------------
+// Each assistant reply stores (in customFields.metadata.contextChecksum) a hash
+// of the exact conversation context it was generated from: the message trail
+// sent to the model, minus the system prompt (which lives in config and carries
+// volatile built-in variables like {{ DATE_TODAY }}). The webview owns this hash
+// on both ends — it is computed when a message is sent (see sendMessage) and
+// recomputed at render time — so the two can never disagree by construction. A
+// reply is "stale" when its context no longer hashes to the stored value, i.e.
+// an earlier message was edited after the reply was generated.
+const _FNV_OFFSET = 0x811c9dc5;
+const _FNV_PRIME = 0x01000193;
+
+/** Folds a string into a running 32-bit FNV-1a hash (Math.imul => identical in every JS engine). */
+function _fnv1aFold(hash, str) {
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, _FNV_PRIME);
+  }
+  return hash;
+}
+
+/** Canonical, order-sensitive fragment for one message (role + content + attachment identities). */
+function _messageChecksumFragment(message) {
+  const attachments = (message.attachments || [])
+    .map((a) => a.name + "\x1f" + a.url)
+    .join("\x1d");
+  return message.role + "\x00" + (message.content || "") + "\x00" + attachments + "\x1e";
+}
+
+/** Hex FNV-1a of an ordered list of context messages (meta roles skipped). */
+function _computeContextChecksum(messages) {
+  let hash = _FNV_OFFSET;
+  for (const message of messages) {
+    if (!message || message.role.startsWith("#")) {
+      continue;
+    }
+    hash = _fnv1aFold(hash, _messageChecksumFragment(message));
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
+ * Recomputes which assistant replies are "stale" — their upstream context was
+ * edited after the reply was generated, so the reply may no longer reflect it.
+ *
+ * Primary signal is the stored context checksum. Because `activePath` is a single
+ * root->leaf chain, a rolling FNV-1a hash of the non-meta messages seen so far
+ * *is* each node's context hash, so one O(n) pass detects every mismatch. Replies
+ * saved before this feature lack a checksum; those fall back to the timestamp
+ * heuristic (an ancestor stamped later than the reply). Derived only — nothing
+ * about staleness is written to the .chat file.
+ */
+function _computeStaleMessages() {
+  const stale = new Set();
+  let hash = _FNV_OFFSET;          // rolling hash of the non-meta context seen so far
+  let maxAncestorTime = -Infinity; // fallback for checksum-less replies
+  for (const id of activePath) {
+    const message = flatMessages[id];
+    if (!message) {
+      continue;
+    }
+    const time = Date.parse(message.timestamp) || 0;
+    if (message.role === "assistant") {
+      const stored = message.customFields && message.customFields.metadata && message.customFields.metadata.contextChecksum;
+      if (stored) {
+        if ((hash >>> 0).toString(16).padStart(8, "0") !== stored) {
+          stale.add(message.id);
+        }
+      } else if (maxAncestorTime > time) {
+        stale.add(message.id);
+      }
+    }
+    if (!message.role.startsWith("#")) {
+      hash = _fnv1aFold(hash, _messageChecksumFragment(message));
+    }
+    if (time > maxAncestorTime) {
+      maxAncestorTime = time;
+    }
+  }
+  _staleMessageIDs = stale;
+}
+
 /**
  * Renders the entire conversation.
  * @param {boolean} shouldAnimateLastMessage - Whether to animate the last message when rendering.
  */
 function renderConversation(shouldAnimateLastMessage = false) {
   _teardownBranchPreview();
+  _computeStaleMessages();
   conversationContainer.innerHTML = "";
   // Render messages in the active path
   activePath.forEach((messageID) => {
@@ -3319,10 +3541,14 @@ function sendMessage(leafMessage) {
   const leafMessageIndex = fullPath.indexOf(leafMessage.id);
   const path = fullPath.slice(0, leafMessageIndex + 1);
   const config = getMessageConfig(leafMessage.id);
+  const contextMessages = path.map((id) => flatMessages[id]);
   vscode.postMessage({
     type: "sendMessage",
     config: config,
-    messageTrail: path.map((id) => flatMessages[id]),
+    messageTrail: contextMessages,
+    // Hash of the exact context this reply is generated from, stored on the
+    // reply so later edits upstream can be detected (see _computeStaleMessages).
+    contextChecksum: _computeContextChecksum(contextMessages),
   });
 }
 

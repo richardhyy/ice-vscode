@@ -3,12 +3,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as mime from 'mime-types';
 import html from '../webview/chatview.html';
-import { Provider, ProviderManager } from './providerManager';
+import { Provider, ProviderManager, ProviderCompletionMeta } from './providerManager';
 import { Attachment, ChatAction, ChatHistoryManager, ChatMessage } from './chatHistoryManager';
 import { InstantChatManager } from './instantChatManager';
 import { SnippetManager } from './snippetManager';
 import { ROLE_ASSISTANT, STATE_KEY_PREVIOUS_PROVIDER_ID } from './constants';
-import { preprocessAttachments, resolveMessageTrailVariables } from './messageProcessing';
+import { preprocessAttachments, buildProviderMessageTrail } from './messageProcessing';
 
 let extensionContext: vscode.ExtensionContext;
 let chatViewProvider: ChatViewProvider;
@@ -351,13 +351,25 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
 
           updateProviderStatusBar(provider?.info['name'] || provider?.id);
 
-          // Resolve config variables / placeholders before handing the trail to the provider.
-          const messageTrail = resolveMessageTrailVariables(message.messageTrail);
+          // Drop meta messages before handing the trail to the provider.
+          const messageTrail = buildProviderMessageTrail(message.messageTrail);
 
           // Process the message attachments before passing to the provider
           const needPreprocess = (provider?.info['_needAttachmentPreprocessing'] || 'true') === 'true';
           const processedMessageTrail = preprocessAttachments(messageTrail, chatFilePath, needPreprocess);
           const latestMessage = processedMessageTrail[processedMessageTrail.length - 1];
+
+          // Snapshot the reply's metadata. `model` is a best-effort guess now
+          // (the provider may report the real one on completion); `contextChecksum`
+          // is computed by the webview over the exact context sent (see
+          // sendMessage) so staleness can be detected after later edits. The
+          // datetime is the message timestamp; config is derived from #config
+          // nodes, so neither is duplicated here.
+          const responseModel = configOverride?.Model || provider?.info?.['name'] || providerID;
+          const replyMetadata: Record<string, any> = { model: responseModel };
+          if (typeof message.contextChecksum === 'string') {
+            replyMetadata.contextChecksum = message.contextChecksum;
+          }
 
           let newMessage: ChatMessage = {
             id: Date.now() + Math.floor(Math.random() * 1000),
@@ -365,6 +377,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             content: '',
             parentID: latestMessage.id,
             timestamp: new Date().toISOString(),
+            customFields: { metadata: replyMetadata },
           };
 
           await chatHistoryManager.addMessage(newMessage, false);
@@ -388,11 +401,25 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
                   webviewPanel.webview.postMessage({ type: 'updateMessage', message: newMessage, incomplete: true });
                   webviewPanel.webview.postMessage({ type: 'progress', text: 'Text Completion in Progress', cancelableRequestID: requestID });
                 },
-                async (finalText: string) => {
+                async (finalText: string, meta?: ProviderCompletionMeta) => {
                   // Streaming completed
                   // Save the final message
                   if (finalText && finalText.trim()) {
                     newMessage.content = finalText;
+                    // Fold in whatever the provider optionally reported (real
+                    // model, token usage, and any extra provider metadata) over
+                    // the earlier best-effort snapshot.
+                    newMessage.customFields = newMessage.customFields || {};
+                    const metadata = (newMessage.customFields.metadata = newMessage.customFields.metadata || {});
+                    if (meta?.extra && typeof meta.extra === 'object') {
+                      Object.assign(metadata, meta.extra);
+                    }
+                    if (meta?.model) {
+                      metadata.model = meta.model;
+                    }
+                    if (meta?.usage) {
+                      metadata.usage = meta.usage;
+                    }
                     await chatHistoryManager.addMessage(newMessage);
                     webviewPanel.webview.postMessage({ type: 'updateMessage', message: newMessage });
                   }

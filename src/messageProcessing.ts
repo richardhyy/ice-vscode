@@ -1,50 +1,22 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as yaml from 'js-yaml';
 import * as vscode from 'vscode';
 import { ChatMessage } from './chatHistoryManager';
-import { ROLE_CONFIG, ROLE_USER, isMetaRole } from './constants';
+import { isMetaRole } from './constants';
 
 const isBinaryFileSync = require('isbinaryfile').isBinaryFileSync;
 
-/** Matches template variables of the form `{{ name }}` or `{{name}}`. */
-const VARIABLE_PATTERN = /{{\s*([^\s]+)\s*}}/g;
-
 /**
- * Builds the message trail that will be sent to a provider:
- * - collects `$`-prefixed variables declared in `#config` messages,
- * - substitutes `{{ variable }}` placeholders inside user messages,
- * - drops meta messages (roles prefixed with '#').
+ * Builds the message trail that will be sent to a provider by dropping meta
+ * messages (roles prefixed with '#', e.g. '#config'/'#head'). Those messages
+ * configure the request but are never part of the conversation sent to the
+ * model. Each surviving message is shallow-copied so later processing steps
+ * (e.g. attachment inlining) never mutate the caller's objects.
  */
-export function resolveMessageTrailVariables(rawMessageTrail: ChatMessage[]): ChatMessage[] {
-  const messageTrail: ChatMessage[] = [];
-  const variableValueMap = new Map<string, string>();
-
-  for (const m of rawMessageTrail) {
-    if (m.role === ROLE_CONFIG) {
-      // Extract the variables from the config message.
-      const config: any = yaml.load(m.content);
-      if (config) {
-        for (const key of Object.keys(config)) {
-          if (!key.startsWith('$')) {
-            continue;
-          }
-          variableValueMap.set(key.substring(1), config[key]);
-        }
-      }
-    } else if (!isMetaRole(m.role)) {
-      // Fill variables in the message content.
-      const newMessage = { ...m };
-      if (m.role === ROLE_USER) {
-        newMessage.content = m.content.replace(VARIABLE_PATTERN, (match: string, variableName: string) => {
-          return variableValueMap.get(variableName) || match;
-        });
-      }
-      messageTrail.push(newMessage);
-    }
-  }
-
-  return messageTrail;
+export function buildProviderMessageTrail(rawMessageTrail: ChatMessage[]): ChatMessage[] {
+  return rawMessageTrail
+    .filter(m => !isMetaRole(m.role))
+    .map(m => ({ ...m }));
 }
 
 /**

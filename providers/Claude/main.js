@@ -133,11 +133,26 @@ process.on('message', (message) => {
 
     debug(`Request options: ${JSON.stringify(options)}\n`);
 
+    // Optional response metadata (reported to ICE on completion when present).
+    // Anthropic splits token counts across message_start (input) and
+    // message_delta (output), and reports the resolved model in message_start.
+    let capturedModel = null;
+    let capturedInputTokens = null;
+    let capturedOutputTokens = null;
+
     function handleEvent(event, data) {
       debug(`Received event: ${event}\n`);
       debug(`Received event data: ${JSON.stringify(data)}\n`);
 
       if (event === 'message_start') {
+        if (data.message) {
+          if (data.message.model) {
+            capturedModel = data.message.model;
+          }
+          if (data.message.usage && typeof data.message.usage.input_tokens === 'number') {
+            capturedInputTokens = data.message.usage.input_tokens;
+          }
+        }
         process.send({
           type: 'stream',
           requestID: requestID,
@@ -152,6 +167,10 @@ process.on('message', (message) => {
           });
           return data.delta.text;
         }
+      } else if (event === 'message_delta') {
+        if (data.usage && typeof data.usage.output_tokens === 'number') {
+          capturedOutputTokens = data.usage.output_tokens;
+        }
       } else if (event === 'error') {
         process.send({
           type: 'error',
@@ -164,6 +183,27 @@ process.on('message', (message) => {
     }
 
     let responseText = '';
+
+    // Emits the completion with the optional model + normalized token usage.
+    function sendDone() {
+      const hasUsage = capturedInputTokens != null || capturedOutputTokens != null;
+      const usage = hasUsage
+        ? {
+            promptTokens: capturedInputTokens != null ? capturedInputTokens : undefined,
+            completionTokens: capturedOutputTokens != null ? capturedOutputTokens : undefined,
+            totalTokens: (capturedInputTokens != null && capturedOutputTokens != null)
+              ? capturedInputTokens + capturedOutputTokens
+              : undefined,
+          }
+        : undefined;
+      process.send({
+        type: 'done',
+        requestID: requestID,
+        finalText: responseText,
+        model: capturedModel || config.Model,
+        usage: usage,
+      });
+    }
 
     const req = https.request(options, (res) => {
       debug(`Response status code: ${res.statusCode}\n`);
@@ -235,11 +275,7 @@ process.on('message', (message) => {
 
       res.on('end', () => {
         debug('Response ended\n');
-        process.send({
-          type: 'done',
-          requestID: requestID,
-          finalText: responseText
-        });
+        sendDone();
 
         if (requests[requestID]) {
           delete requests[requestID];
@@ -263,11 +299,7 @@ process.on('message', (message) => {
 
     req.on('close', () => {
       debug('Request aborted\n');
-      process.send({
-        type: 'done',
-        requestID: requestID,
-        finalText: responseText
-      });
+      sendDone();
 
       if (requests[requestID]) {
         delete requests[requestID];

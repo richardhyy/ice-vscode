@@ -127,6 +127,8 @@ process.on('message', (message) => {
       messages: messages,
       max_tokens: parseInt(config.MaxTokensToSample),
       stream: true,
+      // Ask the API to append a final chunk with token usage (OpenAI spec).
+      stream_options: { include_usage: true },
       temperature: parseFloat(config.Temperature || '0.7'),
       logit_bias: JSON.parse(config.LogitBias || '{}'),
     };
@@ -158,8 +160,21 @@ process.on('message', (message) => {
 
     debug(`Request options: ${JSON.stringify(options)}\n`);
 
+    // Optional response metadata (reported to ICE on completion when present).
+    let capturedModel = null;
+    let capturedUsage = null;
+
     function handleEvent(data) {
       debug(`Received event data: ${JSON.stringify(data)}\n`);
+
+      // Any chunk may carry the resolved model; the final usage chunk (requested
+      // via stream_options.include_usage) carries token counts with empty choices.
+      if (data.model) {
+        capturedModel = data.model;
+      }
+      if (data.usage) {
+        capturedUsage = data.usage;
+      }
 
       if (data.object === 'error') {
         process.send({
@@ -169,6 +184,11 @@ process.on('message', (message) => {
         });
       } else if (data.choices) {
         if (data.choices.length === 0) {
+          // A trailing usage-only chunk has empty choices — that's expected, not
+          // an error. Only a genuinely empty first response is an error.
+          if (data.usage) {
+            return null;
+          }
           debug('No response\n');
           process.send({
             type: 'error',
@@ -208,6 +228,25 @@ process.on('message', (message) => {
 
     let responseText = '';
 
+    // Emits the completion, attaching the resolved model + normalized token usage
+    // when the backend reported them (both optional).
+    function sendDone() {
+      const usage = capturedUsage
+        ? {
+            promptTokens: capturedUsage.prompt_tokens,
+            completionTokens: capturedUsage.completion_tokens,
+            totalTokens: capturedUsage.total_tokens,
+          }
+        : undefined;
+      process.send({
+        type: 'done',
+        requestID: requestID,
+        finalText: responseText,
+        model: capturedModel || config.Model,
+        usage: usage,
+      });
+    }
+
     const req = transport.request(options, (res) => {
       debug(`Response status code: ${res.statusCode}\n`);
       debug(`Response headers: ${JSON.stringify(res.headers)}\n`);
@@ -242,11 +281,7 @@ process.on('message', (message) => {
           onData(responseData);
         }
         debug('Response ended\n');
-        process.send({
-          type: 'done',
-          requestID: requestID,
-          finalText: responseText
-        });
+        sendDone();
       });
     });
 
@@ -263,11 +298,7 @@ process.on('message', (message) => {
 
     req.on('close', () => {
       debug('Request aborted\n');
-      process.send({
-        type: 'done',
-        requestID: requestID,
-        finalText: responseText
-      });
+      sendDone();
 
       if (requests[requestID]) {
         delete requests[requestID];
