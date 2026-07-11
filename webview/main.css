@@ -68,7 +68,7 @@
 }
 
 body, html {
-    color: var(--secondary-color);
+    color: var(--vscode-foreground);
     cursor: default;
     user-select: none;
     margin: 0;
@@ -289,7 +289,7 @@ hr {
 
 .header-content .creation-date {
     font-size: var(--fs-footnote);
-    color: var(--secondary-color);
+    color: var(--vscode-descriptionForeground);
 }
 
 .message-container {
@@ -311,7 +311,7 @@ hr {
 }
 
 .message-container.card .validity-check {
-    color: var(--secondary-color);
+    color: var(--vscode-descriptionForeground);
     font-size: var(--fs-footnote);
     font-style: italic;
 }
@@ -399,7 +399,7 @@ hr {
 }
 
 .config-content .no-config {
-    color: var(--secondary-color);
+    color: var(--vscode-descriptionForeground);
     font-style: italic;
 }
 
@@ -631,7 +631,6 @@ hr {
 
 .delete-confirmation-label {
     color: inherit;
-    opacity: 0.85;
 }
 
 .delete-confirmation-actions {
@@ -648,24 +647,21 @@ hr {
  */
 .delete-confirmation-button {
     border: none;
-    background-color: color-mix(in srgb, currentColor 9%, transparent);
+    background-color: color-mix(in srgb, currentColor 12%, transparent);
     color: inherit;
     font: inherit;
     cursor: pointer;
     padding: 0.2em 0.7em;
     border-radius: var(--border-radius-large);
-    opacity: 0.75;
-    transition: opacity 0.15s var(--default-cubic-bezier),
-                background-color 0.15s var(--default-cubic-bezier);
+    transition: background-color 0.15s var(--default-cubic-bezier);
 }
 
 .delete-confirmation-button:hover {
-    opacity: 1;
-    background-color: color-mix(in srgb, currentColor 20%, transparent);
+    background-color: color-mix(in srgb, currentColor 22%, transparent);
 }
 
 .delete-confirmation-button.confirm {
-    opacity: 1;
+    background-color: color-mix(in srgb, currentColor 18%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
