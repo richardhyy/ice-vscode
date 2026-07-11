@@ -141,6 +141,14 @@
       {
         "command": "chat-view.provider.open-panel",
         "title": "Open Provider Panel"
+      },
+      {
+        "command": "ice.tools.enable",
+        "title": "ICE: Enable Tools"
+      },
+      {
+        "command": "ice.mcp.addServer",
+        "title": "ICE: Add MCP Server"
       }
     ],
     "customEditors": [
@@ -283,6 +291,33 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically choose the last provider for new chat."
+        },
+        "ice.mcpServers": {
+          "type": "object",
+          "default": {},
+          "markdownDescription": "MCP servers ICE can use for tool calls. Each key is a server name. Reference secrets with `${env:VAR}` rather than pasting them in plaintext.\n\nExample:\n```json\n{\n  \"filesystem\": { \"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"${env:HOME}/projects\"] },\n  \"remote\": { \"type\": \"http\", \"url\": \"https://example.com/mcp\", \"headers\": { \"Authorization\": \"Bearer ${env:MCP_TOKEN}\" } }\n}\n```",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string", "enum": ["stdio", "http"], "description": "Transport kind. Inferred from command/url when omitted." },
+              "command": { "type": "string", "description": "stdio: executable to launch." },
+              "args": { "type": "array", "items": { "type": "string" }, "description": "stdio: arguments passed to the command." },
+              "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "stdio: extra environment variables." },
+              "url": { "type": "string", "description": "http: the server's Streamable HTTP endpoint." },
+              "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "http: extra request headers." }
+            }
+          }
+        },
+        "ice.tools.autoApprove": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Run MCP tool calls without asking for approval first. Approval is on by default; ICE always records every call and result as an editable node either way."
+        },
+        "ice.tools.maxAutoIterations": {
+          "type": "number",
+          "default": 8,
+          "minimum": 1,
+          "markdownDescription": "Maximum consecutive tool-call rounds ICE runs automatically before pausing to ask whether to continue."
         }
       }
     }
@@ -322,6 +357,7 @@
     "webpack-cli": "^5.1.4"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/js-yaml": "^4.0.9",
     "isbinaryfile": "^5.0.2"
   }

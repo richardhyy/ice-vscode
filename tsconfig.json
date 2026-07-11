@@ -8,6 +8,7 @@
 		"sourceMap": true,
 		"rootDir": "src",
 		"allowJs": true,
+		"skipLibCheck": true,   /* don't type-check third-party .d.ts files (e.g. the MCP SDK + zod) */
 		"strict": true   /* enable all strict type-checking options */
 		/* Additional Checks */
 		// "noImplicitReturns": true, /* Report error when not all code paths in function return a value. */

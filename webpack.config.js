@@ -13,6 +13,7 @@ const path = require('path');
 
 // Dictionary configuration
 const dictionaryConfig = {
+  name: 'providers',
   target: 'node',
   mode: 'none',
   entry: glob.sync('./providers/*/main.js').reduce((acc, filePath) => {
@@ -48,8 +49,49 @@ const dictionaryConfig = {
   },
 };
 
+// Tools configuration. ICE tools are self-describing JS scripts (see tools/) that
+// run in child processes. Bundling them here lets a tool pull in npm dependencies
+// (e.g. the MCP SDK) that are inlined into the tool's own bundle, keeping them out
+// of the core extension. Each tool's `==ICETool==` header is preserved as a banner
+// so it can still be parsed statically.
+const toolsConfig = {
+  name: 'tools',
+  target: 'node',
+  mode: 'none',
+  entry: glob.sync('./tools/*/main.js').reduce((acc, filePath) => {
+    const toolName = path.basename(path.dirname(filePath));
+    acc[toolName] = './' + filePath;
+    return acc;
+  }, {}),
+  output: {
+    path: path.resolve(__dirname, 'dist_tools'),
+    filename: '[name]/main.js',
+    libraryTarget: 'commonjs2'
+  },
+  plugins: [
+    new webpack.BannerPlugin({
+      banner: (pathData) => {
+        // @ts-ignore
+        const filePath = pathData.chunk.entryModule.resource;
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        const match = fileContent.match(/\/\/\s==ICETool==[\s\S]*?\/\/\s==\/ICETool==/);
+        return match ? match[0] : '';
+      },
+      raw: true,
+      entryOnly: true,
+    })
+  ],
+  resolve: {
+    extensions: ['.js']
+  },
+  optimization: {
+    minimize: false,
+  },
+};
+
 // Webview configuration
 const webviewConfig = {
+  name: 'webview',
   target: 'node',
   mode: 'none',
   entry: './webview/main.js',
@@ -68,6 +110,10 @@ const webviewConfig = {
 
 /** @type WebpackConfig */
 const extensionConfig = {
+  name: 'extension',
+  // The extension bundle copies dist_providers/dist_tools and inlines dist_webview
+  // at build time, so those configs must finish first.
+  dependencies: ['providers', 'tools', 'webview'],
   target: 'node',
   mode: 'none',
   entry: './src/extension.ts',
@@ -82,6 +128,16 @@ const extensionConfig = {
         {
           from: './dist_providers',
           to: 'providers',
+        },
+        {
+          // Bundled tools (produced by toolsConfig), including any with npm deps.
+          from: './dist_tools',
+          to: 'tools',
+        },
+        {
+          // The tool harness is dependency-free and runs the bundled tools.
+          from: './tools/_host.js',
+          to: 'tools/_host.js',
         },
       ],
     }),
@@ -144,4 +200,4 @@ const extensionConfig = {
     minimize: false, // Disable minification for the entire bundle
   },
 };
-module.exports = [dictionaryConfig, webviewConfig, extensionConfig];
+module.exports = [dictionaryConfig, toolsConfig, webviewConfig, extensionConfig];

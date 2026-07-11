@@ -20,6 +20,7 @@
 // @variableSuggest     Preset=OpenAI,Ollama,LM Studio,OpenRouter,Groq,DeepSeek,Together,Mistral,xAI,Fireworks,Perplexity,Custom
 // @variableSuggest     ReasoningEffort=none,minimal,low,medium,high,xhigh
 // @quickOption         Model
+// @supportsTools       true
 // ==/ICEProvider==
 
 const https = require('https');
@@ -222,8 +223,41 @@ process.on('message', (message) => {
   if (message.type === 'getCompletion') {
     const messageTrail = message.messageTrail;
     const config = message.config;
+    const tools = message.tools;
 
     const messages = messageTrail.map((message) => {
+      // A tool-result node becomes an OpenAI `tool` message, keyed by the id of
+      // the call it answers.
+      if (message.role === 'tool') {
+        return {
+          role: 'tool',
+          tool_call_id: (message.customFields && message.customFields.toolCallID) || '',
+          content: message.content || '',
+        };
+      }
+
+      // An assistant turn that emitted tool calls carries them as `tool_calls`
+      // (its text content may be empty, in which case send null).
+      if (
+        message.role === 'assistant' &&
+        message.customFields &&
+        Array.isArray(message.customFields.toolCalls) &&
+        message.customFields.toolCalls.length > 0
+      ) {
+        return {
+          role: 'assistant',
+          content: message.content ? message.content : null,
+          tool_calls: message.customFields.toolCalls.map((call) => ({
+            id: call.id,
+            type: 'function',
+            function: {
+              name: call.name,
+              arguments: typeof call.arguments === 'string' ? call.arguments : JSON.stringify(call.arguments || {}),
+            },
+          })),
+        };
+      }
+
       const processedMessage = {
         role: message.role,
         content: [
@@ -314,6 +348,18 @@ process.on('message', (message) => {
       requestPayload.reasoning_effort = config.ReasoningEffort;
     }
 
+    // Offer the enabled tools to the model using the OpenAI function-tool schema.
+    if (Array.isArray(tools) && tools.length > 0) {
+      requestPayload.tools = tools.map((tool) => ({
+        type: 'function',
+        function: {
+          name: tool.name,
+          description: tool.description || '',
+          parameters: tool.inputSchema || { type: 'object', properties: {} },
+        },
+      }));
+    }
+
     const requestBody = JSON.stringify(requestPayload);
 
     debug(`Request body: ${requestBody}\n`);
@@ -334,6 +380,8 @@ process.on('message', (message) => {
     // Optional response metadata (reported to ICE on completion when present).
     let capturedModel = null;
     let capturedUsage = null;
+    // Streamed tool calls, keyed by their index; arguments arrive in fragments.
+    const toolCallsAcc = {};
 
     // A request produces exactly one terminal outcome. `settled` guards against a
     // late completion overwriting a reported error (or a double `done` from the
@@ -377,6 +425,29 @@ process.on('message', (message) => {
           reportError('No response');
         } else {
           const delta = data.choices[0].delta || {};
+
+          // Accumulate streamed tool calls: the id and name arrive on the first
+          // fragment of each call, its JSON arguments across subsequent ones.
+          if (Array.isArray(delta.tool_calls)) {
+            for (const toolCallDelta of delta.tool_calls) {
+              const index = typeof toolCallDelta.index === 'number' ? toolCallDelta.index : 0;
+              if (!toolCallsAcc[index]) {
+                toolCallsAcc[index] = { id: '', name: '', arguments: '' };
+              }
+              if (toolCallDelta.id) {
+                toolCallsAcc[index].id = toolCallDelta.id;
+              }
+              if (toolCallDelta.function) {
+                if (toolCallDelta.function.name) {
+                  toolCallsAcc[index].name = toolCallDelta.function.name;
+                }
+                if (typeof toolCallDelta.function.arguments === 'string') {
+                  toolCallsAcc[index].arguments += toolCallDelta.function.arguments;
+                }
+              }
+            }
+          }
+
           // Reasoning/thinking is delivered under different keys depending on the
           // backend: reasoning_text (Copilot proxy), reasoning_content (DeepSeek),
           // or reasoning (OpenRouter). The answer itself comes via `content`.
@@ -419,12 +490,31 @@ process.on('message', (message) => {
             totalTokens: capturedUsage.total_tokens,
           }
         : undefined;
+
+      // Assemble accumulated tool calls, parsing each argument string into an
+      // object (falling back to a raw wrapper if the model emitted invalid JSON).
+      const toolCalls = Object.keys(toolCallsAcc)
+        .map((key) => parseInt(key, 10))
+        .sort((a, b) => a - b)
+        .map((index) => {
+          const accumulated = toolCallsAcc[index];
+          let parsedArguments;
+          try {
+            parsedArguments = accumulated.arguments ? JSON.parse(accumulated.arguments) : {};
+          } catch (e) {
+            parsedArguments = { _raw: accumulated.arguments };
+          }
+          return { id: accumulated.id || ('call_' + index), name: accumulated.name, arguments: parsedArguments };
+        })
+        .filter((call) => call.name);
+
       process.send({
         type: 'done',
         requestID: requestID,
         finalText: responseText,
         model: capturedModel || config.Model,
         usage: usage,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       });
     }
 

@@ -13,6 +13,7 @@
   - [Instant Chat](instant-chat.md)
 - Advanced Topics
   - [Custom Providers](custom-providers.md)
+  - [Custom Tools](custom-tools.md)
   - [Provider Configurations](provider-configurations.md)
 - [FAQ](faq.md)
 - [Contributing](contributing.md)

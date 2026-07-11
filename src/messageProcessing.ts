@@ -2,7 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ChatMessage } from './chatHistoryManager';
-import { isMetaRole } from './constants';
+import { isMetaRole, ROLE_TOOLS } from './constants';
+import { ToolDefinition } from './providerManager';
 
 const isBinaryFileSync = require('isbinaryfile').isBinaryFileSync;
 
@@ -71,4 +72,55 @@ export function preprocessAttachments(messageTrail: ChatMessage[], chatFilePath:
 
     return message;
   });
+}
+
+/**
+ * A tool enabled for a conversation, as stored inside a '#tools' node. `ref` is
+ * the unique, model-facing name the provider sends to the model; `server` + `name`
+ * identify the MCP server and tool to actually invoke when the model calls `ref`.
+ * `inputSchema` is snapshotted so the .chat records exactly what the model saw.
+ */
+export interface EnabledTool {
+  server: string;
+  name: string;
+  ref: string;
+  description?: string;
+  inputSchema?: any;
+  readOnly?: boolean;
+}
+
+/**
+ * Resolves the set of tools enabled at the end of a message trail. Each '#tools'
+ * node states the full active set from that point onward, so the nearest one wins
+ * (a later node fully replaces an earlier one, mirroring how the composer
+ * materialises the complete current selection). Malformed nodes are ignored.
+ */
+export function resolveEnabledTools(messageTrail: ChatMessage[]): EnabledTool[] {
+  let enabled: EnabledTool[] = [];
+  for (const message of messageTrail) {
+    if (message.role === ROLE_TOOLS) {
+      try {
+        const parsed = JSON.parse(message.content || '{}');
+        if (Array.isArray(parsed.enabled)) {
+          enabled = parsed.enabled;
+        }
+      } catch {
+        // Ignore a malformed tools node rather than failing the whole request.
+      }
+    }
+  }
+  return enabled;
+}
+
+/**
+ * Translates the conversation's enabled tools into the provider-facing tool
+ * definitions handed to `getCompletion`. The model-facing `name` is the `ref`, so
+ * tool calls can be mapped back to their server + tool for execution.
+ */
+export function toolDefinitionsFromEnabled(enabled: EnabledTool[]): ToolDefinition[] {
+  return enabled.map((tool) => ({
+    name: tool.ref,
+    description: tool.description,
+    inputSchema: tool.inputSchema || { type: 'object', properties: {} },
+  }));
 }

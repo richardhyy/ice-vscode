@@ -86,6 +86,12 @@ const SCENARIOS = {
       '```\n\n' +
       'In short: keep stable blocks, grow the last one, and append new ones.',
   },
+  tool: {
+    // With tools offered, ask the model to call the first one; otherwise fall
+    // back to this text (so `mock-tool` degrades gracefully without tools).
+    toolCall: true,
+    content: 'No tools were offered, so there is nothing to call.',
+  },
 };
 
 /**
@@ -174,10 +180,86 @@ function pickScenario(model) {
   return SCENARIOS[key] || SCENARIOS.reasoning;
 }
 
+/** Builds plausible arguments for a tool from its JSON-schema parameters. */
+function mockArgsFor(schema) {
+  const out = {};
+  if (schema && schema.properties && typeof schema.properties === 'object') {
+    const required = Array.isArray(schema.required) ? schema.required : Object.keys(schema.properties);
+    for (const key of required) {
+      const prop = schema.properties[key] || {};
+      if (prop.type === 'number' || prop.type === 'integer') {
+        out[key] = 1;
+      } else if (prop.type === 'boolean') {
+        out[key] = true;
+      } else {
+        out[key] = 'mock';
+      }
+    }
+  }
+  return out;
+}
+
+/** Streams a single tool call to the first offered tool (OpenAI delta shape). */
+function streamToolCall(res, model, body, includeUsage) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  });
+
+  const fn = (body.tools[0] && body.tools[0].function) || {};
+  const name = fn.name || 'unknown_tool';
+  const argString = JSON.stringify(mockArgsFor(fn.parameters));
+
+  const events = [
+    { role: 'assistant', content: null, tool_calls: [{ index: 0, id: 'call_mock_' + Date.now().toString(36), type: 'function', function: { name: name, arguments: '' } }] },
+  ];
+  for (const piece of tokenize(argString)) {
+    events.push({ tool_calls: [{ index: 0, function: { arguments: piece } }] });
+  }
+
+  let index = 0;
+  let timer = null;
+  let aborted = false;
+  res.on('close', () => { aborted = true; if (timer) { clearTimeout(timer); } });
+
+  function next() {
+    if (aborted) {
+      return;
+    }
+    if (index < events.length) {
+      res.write(sseChunk(events[index], null, model));
+      index++;
+      timer = setTimeout(next, DELAY_MS);
+      return;
+    }
+    res.write(sseChunk({}, 'tool_calls', model));
+    if (includeUsage) {
+      const promptTokens = Array.isArray(body.messages)
+        ? body.messages.reduce((sum, m) => sum + estimateTokens(messageText(m.content)), 0)
+        : 0;
+      res.write(usageChunk(model, promptTokens, estimateTokens(argString)));
+    }
+    res.write('data: [DONE]\n\n');
+    res.end();
+  }
+
+  next();
+}
+
 function streamCompletion(req, res, body) {
   const scenario = pickScenario(body && body.model);
   const model = (body && body.model) || 'mock';
   const includeUsage = !!(body && body.stream_options && body.stream_options.include_usage);
+
+  // When this scenario wants a tool call and tools were offered, stream a call
+  // to the first tool instead of a text answer.
+  if (scenario.toolCall && Array.isArray(body.tools) && body.tools.length > 0) {
+    streamToolCall(res, model, body, includeUsage);
+    return;
+  }
+
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache, no-transform',

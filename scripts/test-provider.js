@@ -47,8 +47,8 @@ function parseArgs(argv) {
       continue;
     }
     const key = token.slice(2);
-    if (key === 'verbose') {
-      args.verbose = true;
+    if (key === 'verbose' || key === 'tools') {
+      args[key] = true;
       continue;
     }
     const value = argv[i + 1];
@@ -194,6 +194,9 @@ child.on('message', (message) => {
       if (message.usage) {
         console.log(`   usage: ${JSON.stringify(message.usage)}`);
       }
+      if (message.toolCalls && message.toolCalls.length) {
+        console.log(`   toolCalls: ${JSON.stringify(message.toolCalls)}`);
+      }
       if (reasoningText.length === 0) {
         console.log('   (no reasoning stream received — model/endpoint may not emit reasoning)');
       }
@@ -230,6 +233,21 @@ child.on('exit', (code, signal) => {
   }
 });
 
+// Optional sample tools to exercise tool calling (enabled with --tools).
+const tools = args.tools
+  ? [
+      {
+        name: 'get_weather',
+        description: 'Get the current weather for a location',
+        inputSchema: {
+          type: 'object',
+          properties: { location: { type: 'string', description: 'City name' } },
+          required: ['location'],
+        },
+      },
+    ]
+  : [];
+
 // Kick off the request, mirroring ProviderManager's initialize + getCompletion.
 child.send({ type: 'initialize', id: `${providerName}@harness` });
-child.send({ type: 'getCompletion', requestID, messageTrail, config });
+child.send({ type: 'getCompletion', requestID, messageTrail, config, tools });

@@ -30,6 +30,9 @@ let availableProviders = [];
 let providerConfigKeys = {}; // {providerID: [configKey1, configKey2, ...]}
 // Per-variable option metadata a provider exposes: {providerID: {varName: {suggestions?, dynamic?, quick?}}}.
 let providerOptions = {};
+// Resolved non-secret config defaults per provider, used to snapshot a provider's
+// configuration into the conversation the moment it is adopted (see _adoptProvider).
+let providerDefaults = {};
 // Cache of dynamically-listed option values: {providerID: {varName: [{value,label?,detail?}]}}.
 let providerDynamicOptionsCache = {};
 // In-flight/finished dynamic option fetches so we never double-request: {providerID: {varName: 'loading'|'done'}}.
@@ -42,6 +45,19 @@ let _providerConfigWaiters = {};
 // Quick-tune overrides chosen in the composer, keyed by the (shadow) message id
 // -> {ConfigKey: value}. Materialised into a #config node when the message is sent.
 let _composerQuickConfig = {};
+// Tool-call orchestration state.
+let _toolAutoApprove = false;      // ice.tools.autoApprove (approval on when false)
+let _toolMaxAutoIterations = 8;    // ice.tools.maxAutoIterations (loop cap)
+let _toolAutoRunCount = 0;         // consecutive auto tool rounds since last user send
+let _pendingToolRequests = {};     // requestID -> { assistantID, call }
+let _toolOrchestration = {};       // assistantID -> 'awaiting-approval' | 'running' | 'capped'
+let _toolRequestCounter = 0;
+// Composer Tools control: the draft tool selection per (shadow) message, plus a
+// cache of the tools available to enable (built-in + MCP), fetched from the host.
+let _composerToolSelection = {};
+let _availableTools = null;
+let _availableToolsWaiters = [];
+let _toolsPopoverRefresh = null; // rebuilds the open Tools picker when availability changes
 let snippets = {}; // {completion: content}
 
 let globalUndoLock = null;
@@ -297,6 +313,20 @@ function _handleMessageSubmit(content, message) {
       }
     }
 
+    // Materialise a composer tool selection into a #tools node, but only when it
+    // differs from the tools already enabled at this point.
+    let toolsSelection = null;
+    const draftTools = _composerToolSelection[shadowId];
+    if (draftTools) {
+      const inheritedTools = parentID != null ? _enabledToolsAt(parentID) : [];
+      const inheritedRefs = new Set(inheritedTools.map((tool) => tool.ref));
+      const draftRefs = new Set(draftTools.map((tool) => tool.ref));
+      const changed = inheritedRefs.size !== draftRefs.size || [...draftRefs].some((ref) => !inheritedRefs.has(ref));
+      if (changed) {
+        toolsSelection = draftTools;
+      }
+    }
+
     message = {
       id: _freshID(),
       role: "user",
@@ -306,11 +336,17 @@ function _handleMessageSubmit(content, message) {
       timestamp: new Date().toISOString(),
     };
 
-    if (configDiff) {
-      // Insert the config node and the user message as one undoable step.
+    if (configDiff || toolsSelection) {
+      // Insert the config/tools nodes and the user message as one undoable step.
       _asUndoTransaction(() => {
-        const configID = insertConfigUpdate(parentID, null, configDiff);
-        message.parentID = configID;
+        let chainParent = parentID;
+        if (configDiff) {
+          chainParent = insertConfigUpdate(chainParent, null, configDiff);
+        }
+        if (toolsSelection) {
+          chainParent = _createToolsNode(chainParent, toolsSelection);
+        }
+        message.parentID = chainParent;
         addMessage(message);
       });
     } else {
@@ -318,6 +354,7 @@ function _handleMessageSubmit(content, message) {
     }
 
     delete _composerQuickConfig[shadowId];
+    delete _composerToolSelection[shadowId];
   } else {
     // Edit the message if it's an existing message
     message.content = content;
@@ -1086,6 +1123,10 @@ function _appendComposerQuickBar(parentElement, message) {
   bar.classList.add("composer-quick-bar");
   parentElement.appendChild(bar);
 
+  // Tools control: choose which tools the model may call for this message. Shown
+  // regardless of provider quick-options so tools stay discoverable.
+  bar.appendChild(_createComposerToolsControl(message, configBaseMessageID));
+
   _ensureProviderConfig(providerID, () => {
     // The editor may have been dismissed while the payload was in flight.
     if (!bar.isConnected) {
@@ -1093,10 +1134,6 @@ function _appendComposerQuickBar(parentElement, message) {
     }
     const meta = providerOptions[providerID] || {};
     const quickKeys = Object.keys(meta).filter((key) => meta[key] && meta[key].quick);
-    if (quickKeys.length === 0) {
-      bar.remove();
-      return;
-    }
 
     for (const key of quickKeys) {
       const override = _composerQuickConfig[message.id] && _composerQuickConfig[message.id][key];
@@ -1125,6 +1162,268 @@ function _appendComposerQuickBar(parentElement, message) {
       bar.appendChild(select);
     }
   });
+}
+
+/** Ensures the available-tools list (built-in + MCP) is loaded, then runs `cb`. */
+function _ensureAvailableTools(cb) {
+  if (_availableTools !== null) {
+    cb(_availableTools);
+    return;
+  }
+  _availableToolsWaiters.push(cb);
+  vscode.postMessage({ type: "fetchAvailableTools" });
+}
+
+/** Creates and persists a '#tools' node under `parentID`, returning its id. */
+function _createToolsNode(parentID, enabled) {
+  const id = _freshID();
+  const node = {
+    id: id,
+    role: "#tools",
+    content: JSON.stringify({ enabled: enabled || [] }),
+    parentID: parentID,
+    timestamp: new Date().toISOString(),
+  };
+  updateFlatMessages(node);
+  addMessage(node);
+  return id;
+}
+
+/**
+ * Builds the composer's Tools control: a pill (with a live count of enabled
+ * tools) that opens an inline picker of the available tools. Toggling a tool
+ * updates a draft selection for the message being composed, which is written as
+ * a '#tools' node when the message is sent. Keeps tool setup in one discoverable
+ * place, including a shortcut to add an MCP server.
+ */
+function _createComposerToolsControl(message, configBaseMessageID) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "composer-tools";
+
+  const effectiveSelection = () =>
+    _composerToolSelection[message.id] || (configBaseMessageID != null ? _enabledToolsAt(configBaseMessageID) : []);
+
+  const pill = document.createElement("button");
+  pill.type = "button";
+  pill.className = "composer-tools-pill";
+  const pillLabel = document.createElement("span");
+  pillLabel.textContent = "Tools";
+  pill.appendChild(pillLabel);
+  const pillCount = document.createElement("span");
+  pillCount.className = "composer-tools-count";
+  pill.appendChild(pillCount);
+  wrapper.appendChild(pill);
+
+  const refreshPill = () => {
+    const count = effectiveSelection().length;
+    pillCount.textContent = count > 0 ? String(count) : "";
+    pill.classList.toggle("is-active", count > 0);
+  };
+  refreshPill();
+
+  let popover = null;
+  const onDocumentDown = (event) => {
+    if (popover && !wrapper.contains(event.target)) {
+      closePopover();
+    }
+  };
+  function closePopover() {
+    if (popover) {
+      popover.remove();
+      popover = null;
+      _toolsPopoverRefresh = null;
+      document.removeEventListener("mousedown", onDocumentDown, true);
+    }
+  }
+
+  const buildRows = (available) => {
+    if (!popover) {
+      return;
+    }
+    popover.innerHTML = "";
+
+    if (!available || available.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "composer-tools-empty";
+      empty.textContent = "No tools available yet.";
+      popover.appendChild(empty);
+    } else {
+      const selectedRefs = new Set(effectiveSelection().map((tool) => tool.ref));
+
+      // Group tools by their source (built-in, and one group per MCP server) so a
+      // whole server can be toggled at once and its tools shown with short names.
+      const groups = new Map();
+      for (const tool of available) {
+        const label = tool.sourceLabel || tool.source || tool.server || "tools";
+        if (!groups.has(label)) {
+          groups.set(label, { label: label, source: tool.source, tools: [] });
+        }
+        groups.get(label).tools.push(tool);
+      }
+
+      const addSelection = (tools) => {
+        const current = effectiveSelection().slice();
+        for (const tool of tools) {
+          if (!current.some((entry) => entry.ref === tool.ref)) {
+            current.push(tool);
+          }
+        }
+        _composerToolSelection[message.id] = current;
+        refreshPill();
+      };
+      const removeSelection = (tools) => {
+        const refs = new Set(tools.map((tool) => tool.ref));
+        _composerToolSelection[message.id] = effectiveSelection().filter((entry) => !refs.has(entry.ref));
+        refreshPill();
+      };
+
+      for (const group of groups.values()) {
+        const groupEl = document.createElement("div");
+        groupEl.className = "composer-tools-group";
+
+        const header = document.createElement("div");
+        header.className = "composer-tools-group-header";
+
+        const toggle = document.createElement("label");
+        toggle.className = "composer-tools-group-toggle";
+        const groupCheckbox = document.createElement("input");
+        groupCheckbox.type = "checkbox";
+        toggle.appendChild(groupCheckbox);
+
+        const groupName = document.createElement("span");
+        groupName.className = "composer-tools-group-name";
+        groupName.textContent = group.label;
+        toggle.appendChild(groupName);
+
+        const groupCount = document.createElement("span");
+        groupCount.className = "composer-tools-group-count";
+        toggle.appendChild(groupCount);
+        header.appendChild(toggle);
+
+        // Only MCP servers are removable here (built-in and file tools aren't
+        // server-backed). Removing edits the user's settings, refreshing the list.
+        if (group.source === "MCP") {
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "composer-tools-group-remove";
+          remove.title = "Remove this MCP server";
+          remove.setAttribute("aria-label", "Remove MCP server " + group.label);
+          remove.innerHTML = icons.ICON_TRASH;
+          remove.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            vscode.postMessage({ type: "removeMcpServer", server: group.label });
+          });
+          header.appendChild(remove);
+        }
+
+        groupEl.appendChild(header);
+
+        const toolsEl = document.createElement("div");
+        toolsEl.className = "composer-tools-group-tools";
+        const childCheckboxes = [];
+
+        const syncGroup = () => {
+          const selected = childCheckboxes.filter((box) => box.checked).length;
+          groupCheckbox.checked = selected > 0 && selected === childCheckboxes.length;
+          groupCheckbox.indeterminate = selected > 0 && selected < childCheckboxes.length;
+          groupCount.textContent = selected > 0 ? selected + "/" + group.tools.length : String(group.tools.length);
+        };
+
+        groupCheckbox.addEventListener("change", () => {
+          const on = groupCheckbox.checked;
+          childCheckboxes.forEach((box) => { box.checked = on; });
+          if (on) {
+            addSelection(group.tools);
+          } else {
+            removeSelection(group.tools);
+          }
+          syncGroup();
+        });
+
+        for (const tool of group.tools) {
+          const row = document.createElement("label");
+          row.className = "composer-tools-row";
+          if (tool.description) {
+            row.title = tool.description;
+          }
+
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.checked = selectedRefs.has(tool.ref);
+          childCheckboxes.push(checkbox);
+          checkbox.addEventListener("change", () => {
+            if (checkbox.checked) {
+              addSelection([tool]);
+            } else {
+              removeSelection([tool]);
+            }
+            syncGroup();
+          });
+          row.appendChild(checkbox);
+
+          const name = document.createElement("span");
+          name.className = "composer-tools-row-name";
+          name.textContent = tool.title || tool.name;
+          row.appendChild(name);
+
+          if (tool.readOnly) {
+            const readonly = document.createElement("span");
+            readonly.className = "composer-tools-row-readonly";
+            readonly.textContent = "read-only";
+            row.appendChild(readonly);
+          }
+
+          toolsEl.appendChild(row);
+        }
+
+        syncGroup();
+        groupEl.appendChild(toolsEl);
+        popover.appendChild(groupEl);
+      }
+    }
+
+    const footer = document.createElement("div");
+    footer.className = "composer-tools-footer";
+    const addFromFile = document.createElement("button");
+    addFromFile.type = "button";
+    addFromFile.className = "composer-tools-add";
+    addFromFile.textContent = "Add tool from file\u2026";
+    addFromFile.addEventListener("click", () => {
+      vscode.postMessage({ type: "addToolFromFile" });
+    });
+    footer.appendChild(addFromFile);
+    const addServer = document.createElement("button");
+    addServer.type = "button";
+    addServer.className = "composer-tools-add";
+    addServer.textContent = "Add MCP server\u2026";
+    addServer.addEventListener("click", () => {
+      vscode.postMessage({ type: "openAddMcpServer" });
+      _availableTools = null; // refresh next time the picker opens
+      closePopover();
+    });
+    footer.appendChild(addServer);
+    popover.appendChild(footer);
+  };
+
+  pill.addEventListener("click", () => {
+    if (popover) {
+      closePopover();
+      return;
+    }
+    popover = document.createElement("div");
+    popover.className = "composer-tools-popover";
+    const loading = document.createElement("div");
+    loading.className = "composer-tools-empty";
+    loading.textContent = "Loading tools\u2026";
+    popover.appendChild(loading);
+    wrapper.appendChild(popover);
+    document.addEventListener("mousedown", onDocumentDown, true);
+    _toolsPopoverRefresh = () => buildRows(_availableTools);
+    _ensureAvailableTools(buildRows);
+  });
+
+  return wrapper;
 }
 
 
@@ -1516,6 +1815,9 @@ function _renderBubbleMessage(messageNode, message, clipContent, editing) {
         codeBlock.appendChild(copyButton);
       }
     }
+
+    // Tool calls the model emitted this turn, rendered as visible blocks.
+    _appendToolCallBlocks(messageContent, message);
 
     if (message.attachments) {
       messageContent.appendChild(attachmentContainer);
@@ -1984,6 +2286,796 @@ function _renderConfigNode(messageNode, message, clipContent, editing) {
 
 
 /**
+ * Finds the tool-result node that answers a given tool call id, if one exists.
+ * Call ids are unique, so a global lookup is sufficient.
+ * @param {string} callID
+ * @returns {Object|undefined}
+ */
+function _findToolResult(callID) {
+  return Object.values(flatMessages).find(
+    (m) => m.role === "tool" && m.customFields && m.customFields.toolCallID === callID
+  );
+}
+
+/** Pretty-prints tool-call arguments (unwrapping the invalid-JSON `_raw` case). */
+function _formatToolArgs(args) {
+  if (args && typeof args === "object" && "_raw" in args && Object.keys(args).length === 1) {
+    return String(args._raw);
+  }
+  try {
+    return JSON.stringify(args === undefined ? {} : args, null, 2);
+  } catch (e) {
+    return String(args);
+  }
+}
+
+/**
+ * Renders one tool call the model emitted as a visible, collapsible block. Its
+ * status (requested / ran / failed) is derived from whether a matching tool
+ * result node exists, so the block reflects where the call is in its lifecycle.
+ * The arguments can be edited in place (like a config node) and the call re-run.
+ * @param {Object} call - { id, name, arguments }
+ * @param {Object} assistantMessage - the assistant turn that emitted the call
+ * @returns {HTMLElement}
+ */
+function _createToolCallBlock(call, assistantMessage) {
+  const result = _findToolResult(call.id);
+  const status = !result
+    ? "pending"
+    : (result.customFields && result.customFields.isError ? "failed" : "done");
+
+  const block = document.createElement("details");
+  block.className = "tool-call-block tool-call-" + status;
+  block.open = status === "pending";
+  block.dataset.callId = call.id;
+
+  const summary = document.createElement("summary");
+  summary.className = "tool-call-summary";
+
+  const icon = document.createElement("span");
+  icon.className = "tool-call-icon";
+  icon.innerHTML = status === "failed"
+    ? icons.ICON_TOOL_FAILED
+    : status === "done" ? icons.ICON_TOOL_USED : icons.ICON_TOOL;
+  summary.appendChild(icon);
+
+  const name = document.createElement("span");
+  name.className = "tool-call-name";
+  name.textContent = call.name || "tool";
+  summary.appendChild(name);
+
+  const label = document.createElement("span");
+  label.className = "tool-call-status-label";
+  label.textContent = status === "pending" ? "Requested" : status === "failed" ? "Failed" : "Ran";
+  summary.appendChild(label);
+
+  block.appendChild(summary);
+
+  const args = document.createElement("pre");
+  args.className = "tool-call-args";
+  const code = document.createElement("code");
+  code.textContent = _formatToolArgs(call.arguments);
+  args.appendChild(code);
+  block.appendChild(args);
+
+  // In-block actions (revealed when the block is expanded): edit the arguments
+  // and re-run the call. Kept quiet so transparency never becomes clutter.
+  const actions = document.createElement("div");
+  actions.className = "tool-call-actions";
+
+  actions.appendChild(_toolCallActionButton(icons.ICON_PENCIL, "Edit arguments", () => {
+    _beginToolCallArgEdit(block, args, actions, assistantMessage, call);
+  }));
+  actions.appendChild(_toolCallActionButton(icons.ICON_ARROW_REPEAT, result ? "Run again" : "Run", () => {
+    _rerunToolCall(assistantMessage, call, label);
+  }));
+
+  block.appendChild(actions);
+
+  return block;
+}
+
+/** Builds a quiet icon button for the tool-call block's action row. */
+function _toolCallActionButton(iconHtml, title, onClick) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "tool-call-action";
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.innerHTML = iconHtml;
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onClick();
+  });
+  return button;
+}
+
+/** The JSON schema for a tool call, from the tool enabled at that point (or null). */
+function _schemaForCall(assistantMessage, call) {
+  if (!assistantMessage) {
+    return null;
+  }
+  const entry = _findEnabledEntry(_enabledToolsAt(assistantMessage.id), call.name);
+  return (entry && entry.inputSchema) || null;
+}
+
+/**
+ * Autocompletion for the tool-argument JSON editor, driven by the tool's input
+ * schema — mirroring the config editor's two modes: property names at a key
+ * position, and enum/boolean values after a `"key":`.
+ */
+function _toolArgsAutocomplete(schema) {
+  const properties = (schema && schema.properties) || {};
+  const required = (schema && Array.isArray(schema.required)) ? schema.required : [];
+  return (context) => {
+    const line = context.state.doc.lineAt(context.pos);
+    const textBefore = line.text.slice(0, context.pos - line.from);
+
+    // Value position: `"key": <prefix>` — offer enum/boolean values.
+    const valueMatch = /"?([\w-]+)"?\s*:\s*("?)([^",}\]]*)$/.exec(textBefore);
+    if (valueMatch) {
+      const property = properties[valueMatch[1]];
+      if (property) {
+        let values = [];
+        if (Array.isArray(property.enum)) {
+          values = property.enum;
+        } else if (property.type === "boolean") {
+          values = [true, false];
+        }
+        if (values.length > 0) {
+          const quote = property.type === "string" || (Array.isArray(property.enum) && typeof property.enum[0] === "string");
+          const prefix = valueMatch[3];
+          return {
+            from: context.pos - prefix.length,
+            options: values.map((value) => ({
+              label: String(value),
+              apply: quote ? JSON.stringify(String(value)) : String(value),
+              type: "config-value",
+            })),
+            validFor: /^[^",}\]]*$/,
+          };
+        }
+      }
+    }
+
+    // Key position: start of a line / after `{` or `,` — offer property names.
+    const keyMatch = /(?:^|[{,])\s*("?)([\w-]*)$/.exec(textBefore);
+    if (keyMatch && Object.keys(properties).length > 0) {
+      let present = {};
+      try {
+        present = JSON.parse(context.state.doc.toString()) || {};
+      } catch (e) {
+        present = {};
+      }
+      const word = keyMatch[2];
+      const options = Object.keys(properties)
+        .filter((propertyName) => !(propertyName in present) || propertyName.indexOf(word) === 0)
+        .map((propertyName) => {
+          const property = properties[propertyName] || {};
+          const detail = [property.type || "any"].concat(required.includes(propertyName) ? ["required"] : []).join(" \u00b7 ");
+          return {
+            label: propertyName,
+            apply: JSON.stringify(propertyName) + ": ",
+            type: "property",
+            detail: detail,
+            info: property.description || undefined,
+          };
+        });
+      if (options.length > 0) {
+        return {
+          from: context.pos - (keyMatch[1].length + word.length),
+          options: options,
+          validFor: /^"?[\w-]*$/,
+        };
+      }
+    }
+    return null;
+  };
+}
+
+/**
+ * Swaps a tool call's argument viewer for an inline JSON editor (with schema
+ * autocompletion), in place, so the surrounding turn and other blocks are
+ * undisturbed. Saving validates the JSON and records it on the assistant turn.
+ */
+function _beginToolCallArgEdit(block, argsView, actions, assistantMessage, call) {
+  actions.style.display = "none";
+  argsView.style.display = "none";
+
+  const editWrap = document.createElement("div");
+  editWrap.className = "tool-call-arg-editor";
+
+  const codeMirrorContainer = document.createElement("div");
+  codeMirrorContainer.classList.add("codemirror-container");
+  codeMirrorContainer.dataset.vscodeContext = JSON.stringify({ isEditor: true });
+  editWrap.appendChild(codeMirrorContainer);
+
+  const validity = document.createElement("div");
+  validity.className = "tool-call-validity";
+  editWrap.appendChild(validity);
+
+  const bar = document.createElement("div");
+  bar.className = "tool-call-edit-bar";
+  editWrap.appendChild(bar);
+
+  const submit = (content) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (error) {
+      validity.textContent = "Invalid JSON: " + error.message;
+      validity.classList.add("invalid");
+      return;
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      validity.textContent = "Arguments must be a JSON object.";
+      validity.classList.add("invalid");
+      return;
+    }
+    _saveToolCallArgs(assistantMessage, call, parsed);
+    argsView.firstChild.textContent = _formatToolArgs(parsed);
+    // Signal that the shown result no longer matches the arguments; the Re-run
+    // button beside it is the way to refresh.
+    const statusLabel = block.querySelector(".tool-call-status-label");
+    if (statusLabel && _findToolResult(call.id)) {
+      statusLabel.textContent = "Edited \u00b7 run again";
+    }
+    close();
+  };
+
+  const editor = _renderEditor(
+    codeMirrorContainer,
+    "toolargs-" + call.id,
+    _formatToolArgs(call.arguments),
+    "Edit arguments as JSON\u2026",
+    _toolArgsAutocomplete(_schemaForCall(assistantMessage, call)),
+    submit
+  );
+
+  const cancelButton = document.createElement("button");
+  cancelButton.className = "button";
+  cancelButton.textContent = "Cancel";
+  cancelButton.addEventListener("click", () => close());
+  bar.appendChild(cancelButton);
+
+  const saveButton = document.createElement("button");
+  saveButton.className = "button primary";
+  saveButton.textContent = "Save";
+  saveButton.addEventListener("click", () => submit(editor.state.doc.toString()));
+  bar.appendChild(saveButton);
+
+  function close() {
+    editWrap.remove();
+    argsView.style.display = "";
+    actions.style.display = "";
+  }
+
+  block.insertBefore(editWrap, argsView.nextSibling);
+  setTimeout(() => editor.focus(), 0);
+}
+
+/**
+ * Records edited arguments on the assistant turn that emitted the call. The full
+ * customFields object is sent because Edit actions replace it wholesale; the
+ * bumped timestamp marks any existing result (and downstream) as stale.
+ */
+function _saveToolCallArgs(assistantMessage, call, newArgs) {
+  const message = flatMessages[assistantMessage.id] || assistantMessage;
+  const customFields = message.customFields ? { ...message.customFields } : {};
+  const toolCalls = Array.isArray(customFields.toolCalls) ? customFields.toolCalls.map((existing) => ({ ...existing })) : [];
+  const target = toolCalls.find((existing) => existing.id === call.id);
+  if (!target) {
+    return;
+  }
+  target.arguments = newArgs;
+  customFields.toolCalls = toolCalls;
+  message.customFields = customFields;
+  message.timestamp = new Date().toISOString();
+  call.arguments = newArgs; // keep the block's own copy in sync for a later re-run
+
+  updateFlatMessages(message);
+  vscode.postMessage({
+    type: "editMessage",
+    messageID: message.id,
+    updates: { customFields: customFields },
+  });
+}
+
+/**
+ * Re-runs a single tool call with its current arguments, updating its result in
+ * place. Unlike the automatic loop this never continues the conversation on its
+ * own — it is a deliberate, contained action; the resulting staleness lets the
+ * user decide whether to regenerate what follows.
+ */
+function _rerunToolCall(assistantMessage, call, statusLabel) {
+  const message = flatMessages[assistantMessage.id] || assistantMessage;
+  const entry = _findEnabledEntry(_enabledToolsAt(message.id), call.name);
+  if (!entry) {
+    if (statusLabel) {
+      statusLabel.textContent = "Not enabled here";
+    }
+    return;
+  }
+  const requestID = "tool-" + Date.now() + "-" + _toolRequestCounter++;
+  _pendingToolRequests[requestID] = { assistantID: message.id, call: call, rerun: true };
+  if (statusLabel) {
+    statusLabel.textContent = "Running\u2026";
+  }
+  vscode.postMessage({
+    type: "executeTool",
+    requestID: requestID,
+    source: entry.source,
+    server: entry.server,
+    toolName: entry.name,
+    arguments: call.arguments || {},
+  });
+}
+
+/** Appends blocks for each tool call an assistant message emitted (if any). */
+function _appendToolCallBlocks(messageContent, message) {
+  const toolCalls = message.customFields && message.customFields.toolCalls;
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
+    return;
+  }
+  for (const call of toolCalls) {
+    messageContent.appendChild(_createToolCallBlock(call, message));
+  }
+  _appendToolOrchestrationBar(messageContent, message);
+}
+
+/**
+ * Renders a tool-result node: the output fed back to the model for a tool call,
+ * shown as its own card (distinct from a message bubble) so it stays visible and
+ * editable rather than hidden runtime machinery.
+ */
+function _renderToolNode(messageNode, message, clipContent, editing) {
+  const isError = Boolean(message.customFields && message.customFields.isError);
+  const toolName = (message.customFields && message.customFields.toolName) || "tool";
+
+  const header = document.createElement("div");
+  header.className = "tool-node-header";
+
+  const icon = document.createElement("span");
+  icon.className = "tool-node-icon" + (isError ? " tool-node-icon-error" : "");
+  icon.innerHTML = isError ? icons.ICON_TOOL_FAILED : icons.ICON_TOOL_SUCCESS;
+  header.appendChild(icon);
+
+  const name = document.createElement("span");
+  name.className = "tool-node-name";
+  name.textContent = toolName;
+  header.appendChild(name);
+
+  messageNode.appendChild(header);
+
+  if (editing) {
+    // Edit the result the same way a config node is edited: an inline editor
+    // with Cancel/Done. A tool result is free-form text, so completion just
+    // offers snippets (as message editing does). Saving marks downstream stale.
+    const codeMirrorContainer = document.createElement("div");
+    codeMirrorContainer.classList.add("codemirror-container");
+    codeMirrorContainer.dataset.id = message.id;
+    codeMirrorContainer.dataset.vscodeContext = JSON.stringify({ isEditor: true });
+    messageNode.appendChild(codeMirrorContainer);
+
+    const editor = _renderEditor(codeMirrorContainer, message.id, message.content || "", "Edit the tool result\u2026",
+      (context) => {
+        const before = context.matchBefore(/\/(\w*)|(\w+)/);
+        if (!before) {
+          return null;
+        }
+        const options = Object.entries(snippets).map(([completion, content]) => ({
+          label: "/" + completion,
+          apply: content,
+          type: "text",
+        }));
+        return { from: before.from, options: options, validFor: /^(\/\w*|\w*)$/ };
+      },
+      (content) => {
+        _handleMessageSubmit(content, message);
+      });
+
+    const operationBar = document.createElement("div");
+    operationBar.classList.add("operation-bar");
+    messageNode.appendChild(operationBar);
+
+    // A left hint keeps the buttons right-aligned (the bar is space-between),
+    // matching the config node's editing layout.
+    const hint = document.createElement("div");
+    hint.className = "validity-check";
+    hint.textContent = "Editing tool result";
+    operationBar.appendChild(hint);
+
+    const buttonContainer = document.createElement("div");
+    buttonContainer.classList.add("operation-group");
+    operationBar.appendChild(buttonContainer);
+
+    const cancelButtonElement = document.createElement("button");
+    cancelButtonElement.className = "button";
+    cancelButtonElement.textContent = "Cancel";
+    cancelButtonElement.addEventListener("click", function () {
+      messageNode.replaceWith(createMessageNode(message, false, false));
+    });
+
+    const saveButtonElement = document.createElement("button");
+    saveButtonElement.className = "button primary";
+    saveButtonElement.textContent = "Done";
+    saveButtonElement.addEventListener("click", function () {
+      _handleMessageSubmit(editor.state.doc.toString(), message);
+    });
+
+    buttonContainer.appendChild(cancelButtonElement);
+    buttonContainer.appendChild(saveButtonElement);
+    return;
+  }
+
+  const body = document.createElement("div");
+  body.className = "tool-node-body markdown-content" + (isError ? " tool-node-body-error" : "");
+  body.innerHTML = _renderMarkdown(message.content || "");
+  messageNode.appendChild(body);
+}
+
+/**
+ * Renders a '#tools' node: the set of tools enabled from this point onward,
+ * shown as a quiet card (like a config card) so the .chat records exactly what
+ * the model was offered.
+ */
+function _renderToolsNode(messageNode, message, clipContent, editing) {
+  let enabled = [];
+  try {
+    const parsed = JSON.parse(message.content || "{}");
+    if (Array.isArray(parsed.enabled)) {
+      enabled = parsed.enabled;
+    }
+  } catch (e) {
+    // Ignore a malformed tools node.
+  }
+
+  const header = document.createElement("div");
+  header.className = "tools-card-header";
+  const icon = document.createElement("span");
+  icon.className = "tools-card-icon";
+  icon.innerHTML = icons.ICON_TOOL;
+  header.appendChild(icon);
+  const title = document.createElement("span");
+  title.className = "tools-card-title";
+  title.textContent = enabled.length === 0 ? "No tools enabled" : "Tools \u00b7 " + enabled.length;
+  header.appendChild(title);
+  messageNode.appendChild(header);
+
+  if (enabled.length > 0) {
+    const list = document.createElement("div");
+    list.className = "tools-card-list";
+    for (const tool of enabled) {
+      const item = document.createElement("div");
+      item.className = "tools-card-item";
+
+      const server = document.createElement("span");
+      server.className = "tools-card-server";
+      server.textContent = tool.server || tool.source || "";
+      item.appendChild(server);
+
+      const name = document.createElement("span");
+      name.className = "tools-card-name";
+      name.textContent = tool.name || tool.ref || "";
+      item.appendChild(name);
+
+      if (tool.readOnly) {
+        const readonly = document.createElement("span");
+        readonly.className = "tools-card-readonly";
+        readonly.textContent = "read-only";
+        item.appendChild(readonly);
+      }
+      list.appendChild(item);
+    }
+    messageNode.appendChild(list);
+  }
+}
+
+
+// --- Tool-call orchestration ------------------------------------------------
+// When an assistant turn asks to call tools, ICE (here in the webview) gates on
+// approval, asks the host to execute each call, records each result as its own
+// `tool` node, and then continues the conversation from there — a loop bounded
+// by `_toolMaxAutoIterations` so it can never run away.
+
+/** Sets a message's transient orchestration state and re-renders it. */
+function _setToolState(messageID, state) {
+  _toolOrchestration[messageID] = state;
+  if (flatMessages[messageID]) {
+    rerenderMessage(messageID);
+  }
+}
+
+/** Clears a message's orchestration state (no re-render). */
+function _clearToolState(messageID) {
+  delete _toolOrchestration[messageID];
+}
+
+/** The tools enabled at a message: the nearest '#tools' node up its path. */
+function _enabledToolsAt(messageID) {
+  let enabled = [];
+  for (const id of getPathWithMessage(messageID)) {
+    const current = flatMessages[id];
+    if (current && current.role === "#tools") {
+      try {
+        const parsed = JSON.parse(current.content || "{}");
+        if (Array.isArray(parsed.enabled)) {
+          enabled = parsed.enabled;
+        }
+      } catch (e) {
+        // Ignore a malformed tools node.
+      }
+    }
+    if (id === messageID) {
+      break;
+    }
+  }
+  return enabled;
+}
+
+/** Finds the enabled-tool entry a model-facing call name (`ref`) maps to. */
+function _findEnabledEntry(enabled, ref) {
+  return enabled.find((entry) => entry.ref === ref);
+}
+
+/** The deepest node in the tool-result chain hanging off an assistant turn. */
+function _toolChainTail(assistantID) {
+  let tail = assistantID;
+  while (true) {
+    const children = messageIDWithChildren[tail] || [];
+    const toolChild = children
+      .map((id) => flatMessages[id])
+      .find((m) => m && m.role === "tool");
+    if (!toolChild) {
+      break;
+    }
+    tail = toolChild.id;
+  }
+  return tail;
+}
+
+/**
+ * Decides what to do with an assistant turn that emitted tool calls: run them
+ * automatically (when approval is bypassed or every pending call is read-only,
+ * and the loop cap has not been reached), otherwise surface an approval or
+ * "continue?" affordance. Calls already answered (e.g. after a reload) are left
+ * untouched so re-opening a file never re-runs tools.
+ */
+function _maybeHandleToolCalls(message) {
+  if (!message || message.role !== "assistant") {
+    return;
+  }
+  const toolCalls = message.customFields && message.customFields.toolCalls;
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
+    return;
+  }
+  const pending = toolCalls.filter((call) => !_findToolResult(call.id));
+  if (pending.length === 0 || _toolOrchestration[message.id] === "running") {
+    return;
+  }
+
+  const enabled = _enabledToolsAt(message.id);
+  const allReadOnly = pending.every((call) => {
+    const entry = _findEnabledEntry(enabled, call.name);
+    return entry && entry.readOnly;
+  });
+  const needsApproval = !_toolAutoApprove && !allReadOnly;
+
+  if (needsApproval) {
+    _setToolState(message.id, "awaiting-approval");
+    return;
+  }
+  if (_toolAutoRunCount >= _toolMaxAutoIterations) {
+    _setToolState(message.id, "capped");
+    return;
+  }
+  _runToolCalls(message, pending, enabled);
+}
+
+/** Requests execution of each pending tool call for an assistant turn. */
+function _runToolCalls(message, pending, enabled) {
+  _toolAutoRunCount++;
+  _setToolState(message.id, "running");
+  for (const call of pending) {
+    const entry = _findEnabledEntry(enabled, call.name);
+    if (!entry) {
+      // The tool is no longer enabled here — record an error result in its place.
+      _upsertToolResult(message, call, true, `Tool "${call.name}" is not available.`);
+      continue;
+    }
+    const requestID = "tool-" + Date.now() + "-" + _toolRequestCounter++;
+    _pendingToolRequests[requestID] = { assistantID: message.id, call: call };
+    vscode.postMessage({
+      type: "executeTool",
+      requestID: requestID,
+      source: entry.source,
+      server: entry.server,
+      toolName: entry.name,
+      arguments: call.arguments || {},
+    });
+  }
+  _maybeContinueAfterTools(message.id);
+}
+
+/** Handles a tool result from the host: records it, then maybe continues. */
+function _handleToolResult(message) {
+  const pending = _pendingToolRequests[message.requestID];
+  if (!pending) {
+    return;
+  }
+  delete _pendingToolRequests[message.requestID];
+  const assistant = flatMessages[pending.assistantID];
+  if (!assistant) {
+    return;
+  }
+  _upsertToolResult(assistant, pending.call, message.isError, message.text);
+  // A manual re-run is a contained action — it refreshes the result but never
+  // drives the conversation forward on its own.
+  if (!pending.rerun) {
+    _maybeContinueAfterTools(pending.assistantID);
+  }
+}
+
+/**
+ * Records a tool call's result: updates the existing `tool` node in place when
+ * one exists (a re-run), otherwise creates and persists a new node chained after
+ * the assistant turn (the first run).
+ */
+function _upsertToolResult(assistantMessage, call, isError, text) {
+  const existing = _findToolResult(call.id);
+  if (existing) {
+    existing.content = text || "";
+    existing.customFields = {
+      ...(existing.customFields || {}),
+      toolCallID: call.id,
+      toolName: call.name,
+      isError: Boolean(isError),
+    };
+    existing.timestamp = new Date().toISOString();
+    updateFlatMessages(existing);
+    vscode.postMessage({
+      type: "editMessage",
+      messageID: existing.id,
+      updates: { content: existing.content, customFields: existing.customFields },
+    });
+    renderConversation();
+    return;
+  }
+
+  const node = {
+    id: _freshID(),
+    role: "tool",
+    content: text || "",
+    parentID: _toolChainTail(assistantMessage.id),
+    timestamp: new Date().toISOString(),
+    customFields: { toolCallID: call.id, toolName: call.name, isError: Boolean(isError) },
+  };
+  updateFlatMessages(node);
+  addMessage(node);
+  scanMessageTree();
+  activePath = getPathWithMessage(node.id);
+  renderConversation();
+}
+
+/**
+ * Once every tool call for an assistant turn has a result (and nothing is still
+ * executing), continues the conversation from the tool results so the model can
+ * react — the auto-continue step of the loop.
+ */
+function _maybeContinueAfterTools(assistantID) {
+  const assistant = flatMessages[assistantID];
+  if (!assistant) {
+    return;
+  }
+  const toolCalls = assistant.customFields && assistant.customFields.toolCalls;
+  if (!Array.isArray(toolCalls)) {
+    return;
+  }
+  const allAnswered = toolCalls.every((call) => _findToolResult(call.id));
+  const stillRunning = Object.values(_pendingToolRequests).some((req) => req.assistantID === assistantID);
+  if (!allAnswered || stillRunning) {
+    return;
+  }
+
+  _clearToolState(assistantID);
+  const tail = flatMessages[_toolChainTail(assistantID)];
+  if (tail) {
+    sendMessage(tail, true);
+  }
+}
+
+/** Renders the approval / running / continue affordance beneath tool calls. */
+function _appendToolOrchestrationBar(messageContent, message) {
+  const state = _toolOrchestration[message.id];
+  if (!state) {
+    return;
+  }
+  const toolCalls = (message.customFields && message.customFields.toolCalls) || [];
+  const pending = toolCalls.filter((call) => !_findToolResult(call.id));
+  if (pending.length === 0) {
+    return;
+  }
+
+  const bar = document.createElement("div");
+  bar.className = "tool-approval-bar";
+
+  const label = document.createElement("span");
+  label.className = "tool-approval-label";
+  bar.appendChild(label);
+
+  if (state === "running") {
+    label.textContent = "Running tool" + (pending.length > 1 ? "s" : "") + "\u2026";
+    messageContent.appendChild(bar);
+    return;
+  }
+
+  if (state === "capped") {
+    label.textContent = "Paused after " + _toolMaxAutoIterations + " automatic tool rounds.";
+    bar.appendChild(_toolBarButton("Continue", "primary", () => {
+      _toolAutoRunCount = 0;
+      _runToolCalls(message, pending, _enabledToolsAt(message.id));
+    }));
+    messageContent.appendChild(bar);
+    return;
+  }
+
+  // awaiting-approval
+  label.textContent = "Run " + pending.length + " tool call" + (pending.length > 1 ? "s" : "") + "?";
+  bar.appendChild(_toolBarButton("Approve", "primary", () => {
+    _runToolCalls(message, pending, _enabledToolsAt(message.id));
+  }));
+  bar.appendChild(_toolBarButton("Skip", "", () => {
+    _clearToolState(message.id);
+    rerenderMessage(message.id);
+  }));
+  messageContent.appendChild(bar);
+}
+
+/** Builds a small button for the tool approval bar. */
+function _toolBarButton(text, variant, onClick) {
+  const button = document.createElement("button");
+  button.className = "tool-approval-button" + (variant ? " " + variant : "");
+  button.textContent = text;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
+/**
+ * Inserts (or updates) a '#tools' node holding the enabled tool set at the
+ * current point in the conversation. Applies downward like a config node, so it
+ * records exactly which tools the model is offered from here on.
+ */
+function _insertToolsNode(enabled) {
+  const content = JSON.stringify({ enabled: enabled || [] });
+  const lastMessage = activePath.length > 0 ? flatMessages[activePath[activePath.length - 1]] : null;
+
+  if (lastMessage && lastMessage.role === "#tools") {
+    // Replace the most recent tools node rather than stacking a duplicate.
+    vscode.postMessage({ type: "editMessage", messageID: lastMessage.id, updates: { content } });
+    lastMessage.content = content;
+    updateFlatMessages(lastMessage);
+    scanMessageTree();
+    rerenderMessage(lastMessage.id);
+    return;
+  }
+
+  const node = {
+    id: _freshID(),
+    role: "#tools",
+    content: content,
+    parentID: lastMessage ? lastMessage.id : null,
+    timestamp: new Date().toISOString(),
+  };
+  updateFlatMessages(node);
+  addMessage(node);
+  scanMessageTree();
+  activePath = getPathWithMessage(node.id);
+  renderConversation();
+}
+
+
+/**
  * Renders the header of the conversation tree.
  * @param {HTMLElement} messageNode - The container node for the header.
  * @param {Object} message - The header message object to render.
@@ -2024,6 +3116,14 @@ function createMessageNode(message, clipContent = false, editing = false) {
     case "#head":
       messageNode.classList.add("header-content");
       _renderHeader(messageNode, message);
+      break;
+    case "tool":
+      messageNode.classList.add("tool-content");
+      _renderToolNode(messageNode, message, clipContent, editing);
+      break;
+    case "#tools":
+      messageNode.classList.add("tools-content");
+      _renderToolsNode(messageNode, message, clipContent, editing);
       break;
     default:
       messageNode.classList.add("message-node");
@@ -2664,6 +3764,47 @@ function handleUpdateConfig(config) {
 
 
 /**
+ * Adopts a provider for the conversation by snapshotting its resolved non-secret
+ * defaults into a #config node at the current point. This is what keeps a .chat
+ * file self-contained: once adopted, the conversation carries its own model,
+ * temperature, system prompt, etc., so editing a *global* default later never
+ * retroactively changes this (or any past) conversation. Secrets are never
+ * snapshotted — they stay in the host's secret storage, referenced by provider id.
+ *
+ * Adopting a new or different provider captures its full default set; re-adopting
+ * the same provider only fills keys the conversation doesn't already govern, so a
+ * value the user has explicitly set is never clobbered.
+ *
+ * @param {string} providerID - The ID of the provider being adopted.
+ */
+function _adoptProvider(providerID) {
+  if (!providerID) {
+    return;
+  }
+  // Defaults ride along with the provider's config payload; wait for it so the
+  // snapshot reflects the provider's real values rather than an empty set.
+  _ensureProviderConfig(providerID, () => {
+    const defaults = providerDefaults[providerID] || {};
+    const leafID = activePath.length > 0 ? activePath[activePath.length - 1] : null;
+    const inherited = leafID != null ? getMessageConfig(leafID) : {};
+    const providerChanged = inherited.Provider !== providerID;
+
+    const snapshot = { Provider: providerID };
+    for (const key in defaults) {
+      const value = defaults[key];
+      if (value === undefined || value === null || value === "") {
+        continue;
+      }
+      if (providerChanged || inherited[key] === undefined) {
+        snapshot[key] = value;
+      }
+    }
+    handleUpdateConfig(snapshot);
+  });
+}
+
+
+/**
  * Gets the last message in the conversation.
  * @returns {Object} The last message object.
  */
@@ -2823,11 +3964,19 @@ function toggleEdit(messageID) {
   const messageContainer = document.querySelector(
     `.message-container[data-id="${messageID}"]`
   );
+  if (!messageContainer) {
+    return;
+  }
   const message = flatMessages[messageID];
-  // Get first child of the message node
-  const messageNode = messageContainer.children[0];
-  const messageContentEditing = createMessageNode(message, false, true);
-  messageNode.replaceWith(messageContentEditing);
+  // The message node sits inside the .message-nodes-container wrapper (alongside
+  // the selection checkbox, meta header and sibling switcher). Replace only that
+  // node so the wrapper — and those siblings — survive the edit.
+  const nodesContainer = messageContainer.querySelector(".message-nodes-container");
+  const messageNode = nodesContainer ? nodesContainer.firstElementChild : messageContainer.children[0];
+  if (!messageNode) {
+    return;
+  }
+  messageNode.replaceWith(createMessageNode(message, false, true));
 
   focusMessageInput(messageID);
 }
@@ -4016,6 +5165,37 @@ window.addEventListener("message", (event) => {
       break;
     case "updateMessage":
       handleUpdateMessage(message.message, message.incomplete);
+      if (!message.incomplete) {
+        _maybeHandleToolCalls(message.message);
+      }
+      break;
+    case "toolResult":
+      _handleToolResult(message);
+      break;
+    case "toolSettings":
+      _toolAutoApprove = Boolean(message.autoApprove);
+      _toolMaxAutoIterations = message.maxAutoIterations || 8;
+      break;
+    case "availableTools": {
+      _availableTools = message.tools || [];
+      const toolWaiters = _availableToolsWaiters;
+      _availableToolsWaiters = [];
+      toolWaiters.forEach((cb) => { try { cb(_availableTools); } catch (e) { console.error(e); } });
+      if (_toolsPopoverRefresh) {
+        try { _toolsPopoverRefresh(); } catch (e) { console.error(e); }
+      }
+      break;
+    }
+    case "availableToolsInvalidated":
+      // The set of tools (e.g. MCP servers) changed; drop the cache and, if the
+      // picker is open, refetch so it reflects the change immediately.
+      _availableTools = null;
+      if (_toolsPopoverRefresh) {
+        _ensureAvailableTools(function () {});
+      }
+      break;
+    case "insertToolsNode":
+      _insertToolsNode(message.enabled);
       break;
     case "deleteMessage":
       deleteMessage(message.messageID);
@@ -4025,9 +5205,7 @@ window.addEventListener("message", (event) => {
       break;
     case "selectProvider":
       currentProvider = message.providerID;
-      handleUpdateConfig({
-        Provider: currentProvider
-      });
+      _adoptProvider(message.providerID);
       break;
     case "progress":
       setProgressIndicator(message.text, message.cancelableRequestID);
@@ -4054,6 +5232,7 @@ window.addEventListener("message", (event) => {
     case "providerConfig":
       providerConfigKeys[message.providerID] = message.configKeys;
       providerOptions[message.providerID] = message.options || {};
+      providerDefaults[message.providerID] = message.defaults || {};
       // Wake anything waiting on this provider's config/options (e.g. a composer
       // quick-tune bar rendered before the payload arrived).
       if (_providerConfigWaiters[message.providerID]) {
@@ -4228,7 +5407,12 @@ document.addEventListener('DOMContentLoaded', () => {
  * Sends a message in the conversation.
  * @param {Object} leafMessage - The leaf message object to send.
  */
-function sendMessage(leafMessage) {
+function sendMessage(leafMessage, isToolContinuation = false) {
+  // A normal (user-initiated) send resets the automatic tool-round counter; a
+  // tool continuation keeps counting so the loop cap can eventually pause it.
+  if (!isToolContinuation) {
+    _toolAutoRunCount = 0;
+  }
   const fullPath = getPathWithMessage(leafMessage.id);
   const leafMessageIndex = fullPath.indexOf(leafMessage.id);
   const path = fullPath.slice(0, leafMessageIndex + 1);

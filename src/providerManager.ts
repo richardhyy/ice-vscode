@@ -44,6 +44,28 @@ export interface ProviderUsage {
 }
 
 /**
+ * A tool offered to the model. `name` is the model-facing identifier (a unique,
+ * sanitized reference that maps back to a specific MCP server + tool); the
+ * provider translates these into its own API's tool/function schema.
+ */
+export interface ToolDefinition {
+  name: string;
+  description?: string;
+  /** JSON schema describing the tool's parameters. */
+  inputSchema: any;
+}
+
+/** A tool call the model emitted, reported back by a provider on completion. */
+export interface ToolCall {
+  /** Provider-issued id, used to match the eventual tool result back to the call. */
+  id: string;
+  /** The model-facing tool name (matches a ToolDefinition.name). */
+  name: string;
+  /** Parsed argument object (or `{ _raw }` when the model emitted invalid JSON). */
+  arguments: any;
+}
+
+/**
  * Metadata a provider may optionally attach to a completed response. Everything
  * here is optional: `model` and `usage` get first-class display, while `extra`
  * lets a provider store any additional fields it wants to surface later.
@@ -54,6 +76,8 @@ export interface ProviderCompletionMeta {
   extra?: Record<string, any>;
   /** Present when the request failed; recorded on the reply so the error persists. */
   error?: string;
+  /** Tool calls the model emitted this turn (empty/absent when it produced text). */
+  toolCalls?: ToolCall[];
 }
 
 export interface Provider {
@@ -66,7 +90,7 @@ export interface Provider {
   };
   /** Per-variable option metadata, surfaced to the webview for suggestion/quick UIs. */
   options: { [key: string]: ProviderOptionMeta };
-  getCompletion: (messageTrail: ChatMessage[], configOverride: { [key: string]: string }, 
+  getCompletion: (messageTrail: ChatMessage[], configOverride: { [key: string]: string }, tools: ToolDefinition[],
                   onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string, meta?: ProviderCompletionMeta) => void) 
                   => Promise<string>;
   /** Asks the provider to list selectable option values for a config variable. */
@@ -343,6 +367,54 @@ export class ProviderManager {
     return config;
   }
 
+  /**
+   * Resolves a provider's non-secret configuration defaults — the provider's
+   * header defaults overlaid with any non-secret values the user has set in global
+   * state — without prompting for anything and without ever reading secrets.
+   *
+   * Used to snapshot a provider's configuration into a conversation the moment it
+   * is adopted, so the conversation carries its own values and is never silently
+   * changed later when a global default is edited. Secrets are deliberately
+   * excluded: they stay in secret storage and are looked up by provider id at
+   * send time, never pinned into a chat file.
+   */
+  public async getNonSecretDefaults(providerID: string): Promise<{ [key: string]: string }> {
+    const providerEntry = this.providers[providerID];
+    if (!providerEntry) {
+      return {};
+    }
+
+    let config: ProviderConfig = providerEntry.config;
+    if (!config) {
+      const providerPath = this.getProviderPath(providerID);
+      if (!fs.existsSync(providerPath)) {
+        return {};
+      }
+      config = await this.parseProviderConfig(fs.readFileSync(providerPath, 'utf8'));
+      providerEntry.config = config;
+    }
+
+    const keyPrefix = providerID.split('@')[0] + '.';
+    const globalState = this.context.globalState;
+    const defaults: { [key: string]: string } = {};
+
+    // Only required + optional variables are snapshotted. Each resolves to the
+    // user's global value if set, otherwise the provider's header default.
+    const collect = (vars: { [key: string]: string | null }) => {
+      for (const key in vars) {
+        const stored = globalState.get(keyPrefix + key) as string | undefined;
+        const value = stored !== undefined && stored !== null ? stored : vars[key];
+        if (value !== undefined && value !== null && value !== '') {
+          defaults[key] = value;
+        }
+      }
+    };
+    collect(config.requiredVariables);
+    collect(config.optionalVariables);
+
+    return defaults;
+  }
+
   private async initializeProvider(providerID: string, providerPath: string): Promise<void> {
     if (this.providers[providerID] && this.providers[providerID].child) {
       // Provider is already initialized or being initialized.
@@ -389,10 +461,10 @@ export class ProviderManager {
           request.onStream(partialText, reasoningText);
         }
       } else if (message.type === 'done') {
-        const { requestID, finalText, model, usage, metadata } = message;
+        const { requestID, finalText, model, usage, metadata, toolCalls } = message;
         const request = this.pendingRequests.get(requestID);
         if (request) {
-          request.onCompletion(finalText, { model, usage, extra: metadata });
+          request.onCompletion(finalText, { model, usage, extra: metadata, toolCalls });
           this.pendingRequests.delete(requestID);
         }
       } else if (message.type === 'error') {
@@ -461,7 +533,7 @@ export class ProviderManager {
         optionalVariables: Object.keys(config.optionalVariables),
       },
       options: config.options || {},
-      getCompletion: async (messageTrail: ChatMessage[], configOverride: { [key: string]: string },
+      getCompletion: async (messageTrail: ChatMessage[], configOverride: { [key: string]: string }, tools: ToolDefinition[],
                             onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string, meta?: ProviderCompletionMeta) => void) => {        
         if (!this.providers[providerID].child) {
           // Provider is not initialized yet; resolve its script path and start it.
@@ -486,7 +558,7 @@ export class ProviderManager {
 
         mergedConfig = this.fillSystemPromptWithEnvironmentVariables(mergedConfig);
 
-        child.send({ type: 'getCompletion', requestID, messageTrail, config: mergedConfig });
+        child.send({ type: 'getCompletion', requestID, messageTrail, config: mergedConfig, tools: tools || [] });
 
         return requestID;
       },

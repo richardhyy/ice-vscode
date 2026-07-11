@@ -8,13 +8,30 @@ import { Attachment, ChatAction, ChatHistoryManager, ChatMessage } from './chatH
 import { InstantChatManager } from './instantChatManager';
 import { SnippetManager } from './snippetManager';
 import { ROLE_ASSISTANT, STATE_KEY_PREVIOUS_PROVIDER_ID } from './constants';
-import { preprocessAttachments, buildProviderMessageTrail } from './messageProcessing';
+import { preprocessAttachments, buildProviderMessageTrail, resolveEnabledTools, toolDefinitionsFromEnabled } from './messageProcessing';
+import { ToolManager } from './toolManager';
+
+/** Setting key holding the user's MCP server declarations (read by the MCP tool). */
+const MCP_SERVERS_SETTING = 'ice.mcpServers';
+
+/** A single MCP server declaration, as written under `ice.mcpServers`. */
+interface McpServerConfig {
+  type?: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  env?: { [key: string]: string };
+  url?: string;
+  headers?: { [key: string]: string };
+}
 
 let extensionContext: vscode.ExtensionContext;
 let chatViewProvider: ChatViewProvider;
 let instantChatManager: InstantChatManager;
 let statusBarItem: vscode.StatusBarItem;
 let snippetManager: SnippetManager;
+let toolManager: ToolManager;
+// Tool scripts the user has added from a file this session (absolute paths).
+const extraToolSources = new Set<string>();
 
 function postMessageToCurrentWebview(message: any) {
   if (chatViewProvider.activeWebview) {
@@ -27,6 +44,29 @@ export function activate(context: vscode.ExtensionContext) {
   snippetManager = new SnippetManager(context);
   chatViewProvider = new ChatViewProvider(context);
   instantChatManager = new InstantChatManager(context);
+
+  // ICE's native tool substrate: tools are self-describing JS scripts run in
+  // child processes (see ToolManager / tools/). MCP is not special — it is just
+  // the built-in `MCP` dynamic-source tool, which owns the MCP SDK in its own
+  // process and reads its servers from the `ice.mcpServers` setting.
+  toolManager = new ToolManager(context);
+  context.subscriptions.push({ dispose: () => toolManager.dispose() });
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration(MCP_SERVERS_SETTING)) {
+        // The MCP tool re-reads the setting on demand; just refresh any open
+        // composer tool picker so newly added/edited servers show up.
+        postMessageToCurrentWebview({ type: 'availableToolsInvalidated' });
+      }
+      if (event.affectsConfiguration('ice.tools')) {
+        postMessageToCurrentWebview({
+          type: 'toolSettings',
+          autoApprove: getConfigurationValue<boolean>('tools.autoApprove') === true,
+          maxAutoIterations: getConfigurationValue<number>('tools.maxAutoIterations') ?? 8,
+        });
+      }
+    })
+  );
 
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.open', openChatView));
   context.subscriptions.push(vscode.window.registerCustomEditorProvider('chat-view.editor', chatViewProvider, {
@@ -139,10 +179,158 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.commands.registerCommand('chat-view.redo', async () => {
     postMessageToCurrentWebview({ type: 'redo' });
   }));
+
+  // Enable tools for the current conversation from a QuickPick, inserting a
+  // '#tools' node with the selection. A command-based alternative to the composer
+  // Tools control. Built-in tools include the `MCP` dynamic source, so MCP server
+  // tools appear here automatically once servers are configured.
+  context.subscriptions.push(vscode.commands.registerCommand('ice.tools.enable', async () => {
+    const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_');
+    type ToolPick = vscode.QuickPickItem & { entry: any };
+    const items: ToolPick[] = [];
+
+    for (const identity of toolManager.listBuiltInTools()) {
+      try {
+        const definitions = await toolManager.resolveToolDefinitions(identity.source, undefined);
+        for (const definition of definitions) {
+          items.push({
+            label: definition.name,
+            description: definition.sourceLabel || 'built-in',
+            detail: definition.description,
+            entry: { source: identity.source, name: definition.name, ref: sanitize(definition.name), description: definition.description, inputSchema: definition.inputSchema, readOnly: definition.readOnly },
+          });
+        }
+      } catch (error: any) {
+        console.error(`Failed to load tool ${identity.source}:`, error && error.message);
+      }
+    }
+
+    if (items.length === 0) {
+      vscode.window.showInformationMessage('No tools available. Built-in tools ship with ICE; add MCP servers with "ICE: Add MCP Server".');
+      return;
+    }
+
+    const picked = await vscode.window.showQuickPick(items, {
+      title: 'Enable tools for this conversation',
+      placeHolder: 'Select the tools to offer the model',
+      canPickMany: true,
+    });
+    if (!picked || picked.length === 0) {
+      return;
+    }
+    postMessageToCurrentWebview({ type: 'insertToolsNode', enabled: picked.map((item) => item.entry) });
+    vscode.window.showInformationMessage(`Enabled ${picked.length} tool(s) for this conversation.`);
+  }));
+
+  // Guided MCP server setup so users don't have to hand-write settings JSON.
+  context.subscriptions.push(vscode.commands.registerCommand('ice.mcp.addServer', async () => {
+    const presets = [
+      { label: '$(beaker) Everything (demo & test server)', detail: 'Simple tools like echo and add — ideal for trying tool calling. Needs Node.', key: 'everything' },
+      { label: '$(folder) Filesystem', detail: 'Read and write files under a folder you choose. Needs Node.', key: 'filesystem' },
+      { label: '$(database) Memory', detail: 'A simple knowledge-graph memory store. Needs Node.', key: 'memory' },
+      { label: '$(edit) Custom…', detail: 'Open settings.json to configure a server by hand.', key: 'custom' },
+    ];
+    const picked = await vscode.window.showQuickPick(presets, { title: 'Add an MCP server', placeHolder: 'Choose a server to add' });
+    if (!picked) {
+      return;
+    }
+    if (picked.key === 'custom') {
+      await vscode.commands.executeCommand('workbench.action.openSettingsJson');
+      return;
+    }
+
+    let serverConfig: McpServerConfig;
+    if (picked.key === 'filesystem') {
+      const folders = await vscode.window.showOpenDialog({
+        canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
+        openLabel: 'Expose this folder', title: 'Filesystem server: choose a folder to expose',
+      });
+      if (!folders || folders.length === 0) {
+        return;
+      }
+      serverConfig = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', folders[0].fsPath] };
+    } else if (picked.key === 'memory') {
+      serverConfig = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory'] };
+    } else {
+      serverConfig = { command: 'npx', args: ['-y', '@modelcontextprotocol/server-everything'] };
+    }
+
+    // Merge into the user's servers under a unique name.
+    const configuration = vscode.workspace.getConfiguration();
+    const servers = { ...(configuration.get<{ [id: string]: McpServerConfig }>(MCP_SERVERS_SETTING) || {}) };
+    let name = picked.key;
+    for (let n = 2; servers[name]; n++) {
+      name = `${picked.key}-${n}`;
+    }
+    servers[name] = serverConfig;
+    await configuration.update(MCP_SERVERS_SETTING, servers, vscode.ConfigurationTarget.Global);
+
+    // Verify by asking the MCP tool to list its tools (it connects on demand and
+    // reads the setting we just wrote), then report how many the new server gave.
+    const prefix = `${name.replace(/[^a-zA-Z0-9_-]/g, '_')}__`;
+    try {
+      const definitions = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `Connecting to MCP server "${name}"…` },
+        () => toolManager.resolveToolDefinitions('MCP', undefined)
+      );
+      const count = definitions.filter((definition) => definition.name.startsWith(prefix)).length;
+      postMessageToCurrentWebview({ type: 'availableToolsInvalidated' });
+      if (count > 0) {
+        vscode.window.showInformationMessage(`Added "${name}" — ${count} tool(s) available. Open a chat and click Tools to enable them.`);
+      } else {
+        vscode.window.showWarningMessage(`Added "${name}", but no tools were found — it may have failed to connect. Check the extension host log and your settings.`);
+      }
+    } catch (error: any) {
+      vscode.window.showErrorMessage(`Added "${name}", but listing its tools failed: ${error && error.message ? error.message : error}`);
+    }
+  }));
 }
 
 export function getConfigurationValue<T>(key: string): T | undefined {
   return vscode.workspace.getConfiguration('ice').get<T>(key);
+}
+
+/** Collects the tools the composer can offer: built-in, user file tools, and MCP. */
+/** Collects the tools the composer can offer: built-in (incl. the MCP source) and user file tools. */
+async function gatherAvailableTools(chatDir: string): Promise<any[]> {
+  const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const tools: any[] = [];
+  const seenRefs = new Set<string>();
+
+  const pushDefinitions = (source: string, sourceLabel: string, definitions: any[]) => {
+    for (const definition of definitions) {
+      const ref = sanitize(definition.name);
+      // Defensive de-duplication: never surface the same tool twice even if a
+      // source hands back duplicates.
+      if (seenRefs.has(ref)) {
+        continue;
+      }
+      seenRefs.add(ref);
+      // A dynamic source (e.g. MCP) can label each tool with its own group and a
+      // friendly display title.
+      tools.push({ source, name: definition.name, ref, title: definition.title, description: definition.description, inputSchema: definition.inputSchema, readOnly: definition.readOnly, sourceLabel: definition.sourceLabel || sourceLabel });
+    }
+  };
+
+  for (const identity of toolManager.listBuiltInTools()) {
+    try {
+      pushDefinitions(identity.source, 'built-in', await toolManager.resolveToolDefinitions(identity.source, chatDir));
+    } catch (error: any) {
+      console.error(`Failed to load tool ${identity.source}:`, error && error.message);
+    }
+  }
+
+  for (const absolutePath of extraToolSources) {
+    try {
+      const relative = path.relative(chatDir, absolutePath);
+      const source = !relative.startsWith('..') && !path.isAbsolute(relative) ? './' + relative : absolutePath;
+      pushDefinitions(source, path.basename(absolutePath), await toolManager.resolveToolDefinitions(source, chatDir));
+    } catch (error: any) {
+      console.error(`Failed to load tool ${absolutePath}:`, error && error.message);
+    }
+  }
+
+  return tools;
 }
 
 class ProviderQuickPickerItem implements vscode.QuickPickItem {
@@ -326,6 +514,14 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
 
     this.loadSnippets(webviewPanel);
 
+    // Push the current tool settings so the webview's orchestration knows whether
+    // to auto-approve tool calls and where the auto-continue loop cap sits.
+    webviewPanel.webview.postMessage({
+      type: 'toolSettings',
+      autoApprove: getConfigurationValue<boolean>('tools.autoApprove') === true,
+      maxAutoIterations: getConfigurationValue<number>('tools.maxAutoIterations') ?? 8,
+    });
+
     let providerExecuting: Provider | null = null;
 
     webviewPanel.webview.onDidReceiveMessage(async (message) => {
@@ -353,6 +549,11 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
 
           // Drop meta messages before handing the trail to the provider.
           const messageTrail = buildProviderMessageTrail(message.messageTrail);
+
+          // Resolve the tools enabled at this point (from '#tools' nodes) into the
+          // provider-facing definitions the model is offered this turn.
+          const enabledTools = resolveEnabledTools(message.messageTrail);
+          const toolDefinitions = toolDefinitionsFromEnabled(enabledTools);
 
           // Process the message attachments before passing to the provider
           const needPreprocess = (provider?.info['_needAttachmentPreprocessing'] || 'true') === 'true';
@@ -391,6 +592,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
               const requestID = await provider.getCompletion(
                 processedMessageTrail,
                 configOverride,
+                toolDefinitions,
                 (partialText: string, reasoningText?: string) => {
                   // Streaming message from provider
                   if (reasoningText) {
@@ -417,6 +619,13 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
                     metadata.usage = meta.usage;
                   }
 
+                  // Persist any tool calls the model emitted so they render as
+                  // editable blocks and can later be executed and answered.
+                  if (meta?.toolCalls && meta.toolCalls.length > 0) {
+                    newMessage.customFields.toolCalls = meta.toolCalls;
+                  }
+                  const hasToolCalls = Boolean(meta?.toolCalls && meta.toolCalls.length > 0);
+
                   if (meta?.error) {
                     // Record the failure on the reply itself so it is visible in the
                     // conversation and persisted to the .chat file, not just shown in
@@ -426,8 +635,12 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
                     metadata.error = meta.error;
                     await chatHistoryManager.addMessage(newMessage);
                     webviewPanel.webview.postMessage({ type: 'updateMessage', message: newMessage });
-                  } else if (finalText && finalText.trim()) {
-                    newMessage.content = finalText;
+                  } else if ((finalText && finalText.trim()) || hasToolCalls) {
+                    // A tool-call turn can carry no text; still persist it so the
+                    // call blocks are recorded and can be acted on.
+                    if (finalText && finalText.trim()) {
+                      newMessage.content = finalText;
+                    }
                     await chatHistoryManager.addMessage(newMessage);
                     webviewPanel.webview.postMessage({ type: 'updateMessage', message: newMessage });
                   }
@@ -604,7 +817,7 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             vscode.window.showErrorMessage(`Provider ${message.providerID} not found.`);
             break;
           }
-          webviewPanel.webview.postMessage({ type: 'providerConfig', providerID: message.providerID, configKeys: providerEntity.configKeys, options: providerEntity.options });
+          webviewPanel.webview.postMessage({ type: 'providerConfig', providerID: message.providerID, configKeys: providerEntity.configKeys, options: providerEntity.options, defaults: await this.providerManager.getNonSecretDefaults(message.providerID) });
           break;
         case 'fetchProviderOptions': {
           // Ask a provider to list selectable values for a config variable (e.g.
@@ -622,6 +835,92 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           } catch (e: any) {
             webviewPanel.webview.postMessage({ type: 'providerOptions', requestID: message.requestID, providerID: message.providerID, variableName: message.variableName, error: e.message });
           }
+          break;
+        }
+        case 'executeTool': {
+          // Every tool runs through the tool substrate. New enabled entries name a
+          // `source` (for MCP tools, the `MCP` dynamic source). Older chats stored
+          // MCP calls with `server`/`toolName` instead — translate those into a
+          // call on the MCP source so they keep working.
+          const sanitize = (value: string) => String(value).replace(/[^a-zA-Z0-9_-]/g, '_');
+          const chatDir = path.dirname(chatFilePath);
+          let result: { content: string; isError: boolean };
+          if (message.source) {
+            result = await toolManager.execute(message.source, message.toolName || null, message.arguments || {}, chatDir);
+          } else if (message.server) {
+            const qualified = `${sanitize(message.server)}__${sanitize(message.toolName)}`;
+            result = await toolManager.execute('MCP', qualified, message.arguments || {}, chatDir);
+          } else {
+            result = { content: `Tool call had no source: ${message.toolName || ''}`, isError: true };
+          }
+          webviewPanel.webview.postMessage({
+            type: 'toolResult',
+            requestID: message.requestID,
+            isError: result.isError,
+            text: result.content,
+          });
+          break;
+        }
+        case 'fetchAvailableTools': {
+          const availableTools = await gatherAvailableTools(path.dirname(chatFilePath));
+          webviewPanel.webview.postMessage({ type: 'availableTools', tools: availableTools });
+          break;
+        }
+        case 'openAddMcpServer':
+          await vscode.commands.executeCommand('ice.mcp.addServer');
+          break;
+        case 'removeMcpServer': {
+          // Remove a configured MCP server from wherever it is declared. The
+          // config watcher then refreshes the composer's tool list.
+          const serverId = message.server;
+          if (!serverId) {
+            break;
+          }
+          const confirm = await vscode.window.showWarningMessage(
+            `Remove the MCP server "${serverId}" from your settings?`,
+            { modal: true },
+            'Remove'
+          );
+          if (confirm !== 'Remove') {
+            break;
+          }
+          const configuration = vscode.workspace.getConfiguration();
+          const inspected = configuration.inspect<{ [id: string]: McpServerConfig }>(MCP_SERVERS_SETTING);
+          const removeFrom = async (value: { [id: string]: McpServerConfig } | undefined, target: vscode.ConfigurationTarget) => {
+            if (value && Object.prototype.hasOwnProperty.call(value, serverId)) {
+              const next = { ...value };
+              delete next[serverId];
+              await configuration.update(MCP_SERVERS_SETTING, next, target);
+            }
+          };
+          await removeFrom(inspected?.workspaceFolderValue, vscode.ConfigurationTarget.WorkspaceFolder);
+          await removeFrom(inspected?.workspaceValue, vscode.ConfigurationTarget.Workspace);
+          await removeFrom(inspected?.globalValue, vscode.ConfigurationTarget.Global);
+          // Refresh immediately (the watcher also fires, but this is snappier).
+          const afterRemoval = await gatherAvailableTools(path.dirname(chatFilePath));
+          webviewPanel.webview.postMessage({ type: 'availableTools', tools: afterRemoval });
+          break;
+        }
+        case 'addToolFromFile': {
+          // Let the user add a tool script from anywhere (e.g. next to their .chat).
+          const files = await vscode.window.showOpenDialog({
+            canSelectFiles: true, canSelectMany: false, filters: { JavaScript: ['js'] },
+            openLabel: 'Add tool', title: 'Add a tool from a JavaScript file',
+          });
+          if (files && files.length > 0) {
+            const absolutePath = files[0].fsPath;
+            try {
+              const definitions = await toolManager.resolveToolDefinitions(absolutePath, path.dirname(chatFilePath));
+              if (definitions.length === 0) {
+                throw new Error('No tool found in the file.');
+              }
+              extraToolSources.add(absolutePath);
+            } catch (error: any) {
+              vscode.window.showErrorMessage(`Could not add tool: ${error && error.message ? error.message : error}`);
+            }
+          }
+          const refreshed = await gatherAvailableTools(path.dirname(chatFilePath));
+          webviewPanel.webview.postMessage({ type: 'availableTools', tools: refreshed });
           break;
         }
         case 'createSnippet':
