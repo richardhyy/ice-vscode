@@ -1,10 +1,15 @@
 # ICE - Integrated Conversational Environment
 
-ICE (Integrated Conversational Environment) is a flexible, easy-to-use VSCode extension that allows users to experiment with conversational AI using various large language models (LLMs). With ICE, you can easily chat with LLMs, manage conversation histories, and even create custom LLM integrations.
+Your conversations with language models, as files you manage in VS Code.
 
 ![ICE Screenshot](docs/images/screenshot.png)
 
-> ❓ **Wondering how to use?** 
+Each conversation is a `.chat`/YAML file in your workspace, so it comes with everything you already use VS Code for, including open two side by side, keep them under version control, organize them like code, and start one the instant you need it without leaving the editor.
+
+You take full control over what goes to the model. A conversation is a tree you can read, edit, and fork, where every turn, including the model's own, is editable.
+
+
+> ❓ **Just want to start chatting?** 
 >
 > Check out the [Basic Usage](#basic-usage) section below.
 
