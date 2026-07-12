@@ -545,6 +545,10 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
     // one and an elicitation response can be routed back to the awaiting call.
     const toolAborters = new Map<string, AbortController>();
     const toolElicitations = new Map<string, (response: { action: string; content?: any }) => void>();
+    // Tool-requested edits to the current conversation, keyed so a result can be
+    // routed back to the awaiting call. The webview performs the change (it is the
+    // single source of truth for the conversation) and reports the outcome.
+    const toolSessionApplies = new Map<string, (result: { ok: boolean; results?: any[]; error?: string }) => void>();
 
     webviewPanel.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
@@ -894,6 +898,28 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
                 });
               });
             },
+            // Where this conversation lives, plus the thread the user is viewing, so a
+            // tool can read the file (or others in the workspace) and reason about the
+            // open thread. `activePath` is supplied by the webview per call.
+            session: {
+              file: chatFilePath,
+              dir: chatDir,
+              workspaceFolders: (vscode.workspace.workspaceFolders || []).map((folder) => folder.uri.fsPath),
+              activePath: Array.isArray(message.activePath) ? message.activePath : [],
+            },
+            // A tool asking to change the current conversation. The edit is handed to
+            // the webview, which applies it visibly and undoably, then reports back.
+            onSessionApply: (request: { applyID: string; operations: any[] }) => {
+              return new Promise<{ ok: boolean; results?: any[]; error?: string }>((resolveApply) => {
+                toolSessionApplies.set(requestID + ':' + request.applyID, resolveApply);
+                webviewPanel.webview.postMessage({
+                  type: 'toolSessionApply',
+                  requestID,
+                  applyID: request.applyID,
+                  operations: request.operations,
+                });
+              });
+            },
           };
 
           let result: ToolExecResult;
@@ -911,6 +937,11 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
             for (const key of [...toolElicitations.keys()]) {
               if (key.startsWith(requestID + ':')) {
                 toolElicitations.delete(key);
+              }
+            }
+            for (const key of [...toolSessionApplies.keys()]) {
+              if (key.startsWith(requestID + ':')) {
+                toolSessionApplies.delete(key);
               }
             }
           }
@@ -938,6 +969,15 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
           if (resolveElicit) {
             toolElicitations.delete(key);
             resolveElicit({ action: message.action || 'cancel', content: message.content });
+          }
+          break;
+        }
+        case 'toolSessionApplyResult': {
+          const key = message.requestID + ':' + message.applyID;
+          const resolveApply = toolSessionApplies.get(key);
+          if (resolveApply) {
+            toolSessionApplies.delete(key);
+            resolveApply(message.result || { ok: false });
           }
           break;
         }

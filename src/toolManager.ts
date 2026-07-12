@@ -61,6 +61,10 @@ export interface ToolExecuteOptions {
   onProgress?: (progress: { progress?: number; total?: number; message?: string }) => void;
   /** Handles a tool's elicitation request, resolving with the user's response. */
   onElicit?: (request: { elicitationID: string; message: string; schema: any }) => Promise<{ action: string; content?: any }>;
+  /** Describes the conversation this call belongs to; relayed to the tool as `context.session`. */
+  session?: { file?: string; dir?: string; workspaceFolders?: string[]; activePath?: any[] };
+  /** Applies a tool's requested message operations to the current conversation, resolving with the outcome. */
+  onSessionApply?: (request: { applyID: string; operations: any[] }) => Promise<{ ok: boolean; results?: any[]; error?: string }>;
 }
 
 interface PendingRequest {
@@ -71,6 +75,7 @@ interface PendingRequest {
   onError?: (error: string) => void;
   onProgress?: (progress: any) => void;
   onElicit?: (message: any) => void;
+  onSessionApply?: (message: any) => void;
 }
 
 /**
@@ -276,10 +281,30 @@ export class ToolManager {
             .then((response) => finish((response && response.action) || 'cancel', response && response.content))
             .catch(() => finish('cancel'));
         },
+        onSessionApply: (message) => {
+          // A tool asking to change the current conversation. Any activity keeps the
+          // call alive; the write itself is performed by the editor (single source
+          // of truth), and the outcome is relayed back to the tool.
+          armTimer();
+          const reply = (result: any) => {
+            try {
+              child.send({ type: 'sessionApplyResult', requestID, applyID: message.applyID, result });
+            } catch {
+              // ignore
+            }
+          };
+          if (!options.onSessionApply) {
+            reply({ ok: false, error: 'This conversation cannot be edited here.' });
+            return;
+          }
+          Promise.resolve(options.onSessionApply({ applyID: message.applyID, operations: message.operations || [] }))
+            .then((result) => reply(result || { ok: false }))
+            .catch((error) => reply({ ok: false, error: (error && error.message) || 'The change could not be applied.' }));
+        },
       });
 
       armTimer();
-      child.send({ type: 'execute', name, arguments: args, config: this.configForSource(sourcePath), requestID });
+      child.send({ type: 'execute', name, arguments: args, config: this.configForSource(sourcePath), session: options.session, requestID });
     });
   }
 
@@ -428,6 +453,10 @@ export class ToolManager {
     }
     if (message.type === 'elicit') {
       pending.onElicit?.(message);
+      return;
+    }
+    if (message.type === 'sessionApply') {
+      pending.onSessionApply?.(message);
       return;
     }
 

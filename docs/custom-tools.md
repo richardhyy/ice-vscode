@@ -90,7 +90,47 @@ async call(args, context) {
 - **Return a string** and the model receives it as the tool's result.
 - **Throw an error** to tell the model something went wrong (`throw new Error("Cannot reach the database.")`). The message is handed back to the model, not shown as a crash.
 - You may also return `{ content, isError }` for finer control.
-- `context` carries `{ config }` today, and is where a session API will live in future.
+- `context` (the second argument) carries this call's capabilities: configuration, cancellation, progress, user prompts, and the current session. See [context](#context).
+
+### context
+
+The second argument to `call` is optional to accept and optional to use. It carries this call's live capabilities:
+
+| Field                     | What it is                                                                                          |
+| ------------------------- | -------------------------------------------------------------------------------------------------- |
+| `config`                  | The tool's configuration object (from its `@config` setting, if any).                              |
+| `signal`                  | An `AbortSignal` that fires when the user stops the call. Pass it to `fetch`, or check `signal.aborted`. |
+| `progress(update)`        | Report progress: a string, or `{ progress, total, message }`.                                      |
+| `elicit(message, fields)` | Ask the user for input mid-call and wait for the answer.                                           |
+| `session`                 | Where this conversation lives, and a way to change it.                                              |
+
+**Asking the user (`elicit`).** `fields` is an `arguments`-shaped object (or a ready JSON schema). It resolves to `{ action, content }`, where `action` is `"accept"`, `"decline"`, or `"cancel"`, and `content` holds the answers on accept. The prompt appears even when tools auto-run, so it is the right place to gate anything sensitive before it reaches the model:
+
+```javascript
+const { action, content } = await context.elicit("Share these results?", {
+  share: { type: "string", enum: ["Yes", "Summary only", "No"] },
+});
+if (action !== "accept" || content.share === "No") return "The user declined.";
+```
+
+**The current session (`session`).** Read where the conversation lives, and change it through the editor:
+
+| Field               | What it is                                                          |
+| ------------------- | ------------------------------------------------------------------ |
+| `file`              | Absolute path of the current `.chat` file.                         |
+| `dir`               | The folder that file sits in.                                      |
+| `workspaceFolders`  | The open workspace roots (handy for searching other `.chat` files). |
+| `activePath`        | The message ids of the thread the user is currently viewing.       |
+| `apply(operations)` | Ask the editor to change messages; resolves with the outcome.      |
+
+`apply` never writes the file itself: it hands the change to the editor, which applies it visibly and undoably, exactly like an edit made by hand. Operations are `{ op: "edit", id, content }` or `{ op: "delete", id }` (a message can only be deleted when nothing follows it). It resolves to `{ ok, results: [{ id, op, ok, error }] }`:
+
+```javascript
+const result = await context.session.apply([{ op: "edit", id: 42, content: "Tidied up." }]);
+if (!result.ok) return "The change could not be applied.";
+```
+
+The built-in `recall` and `session_messages` tools are worked examples: `recall` searches your other conversations behind an `elicit` disclosure gate (nothing is shared until you approve), and `session_messages` reads and tidies the current one through `apply`.
 
 ### Read-only tools
 

@@ -2710,6 +2710,128 @@ function _handleToolElicit(message) {
   }
 }
 
+/**
+ * Checks whether a tool-requested operation on the current conversation is
+ * allowed, without changing anything. An edit may target a normal message (not a
+ * settings/tooling node). A delete may target any message except the conversation
+ * root, provided the same batch also deletes everything beneath it: this
+ * "downward-closed" rule means a deletion can never silently orphan (and thereby
+ * drop) messages the caller did not account for. `deleteSet` is the set of ids
+ * being deleted in this batch, as strings.
+ */
+function _validateSessionOp(op, deleteSet) {
+  if (!op || typeof op !== "object") {
+    return { ok: false, error: "Invalid operation." };
+  }
+  const message = (op.id === null || op.id === undefined) ? null : flatMessages[op.id];
+  if (!message) {
+    return { ok: false, error: `No message with id ${op.id}.` };
+  }
+  const isMeta = typeof message.role === "string" && message.role.charAt(0) === "#";
+  if (op.op === "edit") {
+    if (isMeta) {
+      return { ok: false, error: "That is a settings/tooling node and cannot be edited here." };
+    }
+    if (op.content === undefined || op.content === null) {
+      return { ok: false, error: "No content provided." };
+    }
+    return { ok: true, message: message };
+  }
+  if (op.op === "delete") {
+    if (message.role === "#head") {
+      return { ok: false, error: "The start of the conversation cannot be deleted." };
+    }
+    const children = messageIDWithChildren[message.id] || [];
+    const orphaned = children.filter((childID) => !deleteSet.has(String(childID)));
+    if (orphaned.length > 0) {
+      return { ok: false, error: "Deleting this would leave later messages orphaned; include them in the deletion." };
+    }
+    return { ok: true, message: message };
+  }
+  return { ok: false, error: `Unknown operation "${op.op}".` };
+}
+
+/**
+ * Applies a tool's requested changes to the current conversation, exactly the way
+ * a user edit would: each change is validated, the batch is wrapped as one undo
+ * step, and edited messages are flashed where they land. The webview is the sole
+ * place the conversation is mutated, so tool writes flow through here rather than
+ * touching the file directly. A per-operation result is reported back so the tool
+ * can tell the model precisely what happened.
+ */
+function _handleToolSessionApply(message) {
+  const operations = Array.isArray(message.operations) ? message.operations : [];
+  const deleteSet = new Set(
+    operations
+      .filter((op) => op && op.op === "delete" && op.id !== null && op.id !== undefined)
+      .map((op) => String(op.id))
+  );
+  const results = [];
+  const plans = [];
+  operations.forEach((op) => {
+    const check = _validateSessionOp(op, deleteSet);
+    results.push({ id: op && op.id, op: op && op.op, ok: check.ok, error: check.error });
+    if (check.ok) {
+      plans.push({ op: op, message: check.message });
+    }
+  });
+
+  // Where to settle the view after deletions: the surviving parent of the topmost
+  // removed message, i.e. where the deletion began.
+  let landingID = null;
+  for (const plan of plans) {
+    if (plan.op.op === "delete") {
+      const parentID = plan.message.parentID;
+      if (parentID !== null && parentID !== undefined && !deleteSet.has(String(parentID))) {
+        landingID = parentID;
+        break;
+      }
+    }
+  }
+
+  const changedIDs = [];
+  if (plans.length > 0) {
+    _asUndoTransaction(() => {
+      plans.forEach((plan) => {
+        if (plan.op.op === "edit") {
+          plan.message.content = String(plan.op.content);
+          plan.message.timestamp = new Date().toISOString();
+          updateFlatMessages(plan.message);
+          vscode.postMessage({ type: "editMessage", messageID: plan.message.id, updates: { content: plan.message.content } });
+          changedIDs.push(plan.message.id);
+        } else if (plan.op.op === "delete") {
+          delete flatMessages[plan.message.id];
+          vscode.postMessage({ type: "deleteMessage", messageID: plan.message.id });
+        }
+      });
+    });
+    scanMessageTree();
+    // A delete may have removed the tail of the open thread; land on the deletion's
+    // parent when we know it, otherwise the most recent surviving message.
+    if (!activePath.every((id) => flatMessages[id])) {
+      if (landingID !== null && flatMessages[landingID]) {
+        activePath = getPathWithMessage(landingID);
+      } else {
+        const last = getLastMessage();
+        activePath = (last && last.id !== undefined) ? getPathWithMessage(last.id) : [];
+      }
+    }
+    renderConversation();
+    const survivors = changedIDs.filter((id) => flatMessages[id]);
+    if (survivors.length > 0) {
+      _flashMessages(survivors);
+    }
+  }
+
+  const ok = results.length > 0 && results.every((entry) => entry.ok);
+  vscode.postMessage({
+    type: "toolSessionApplyResult",
+    requestID: message.requestID,
+    applyID: message.applyID,
+    result: { ok: ok, results: results },
+  });
+}
+
 /** The provenance line for an elicitation form ("who is asking"). */
 function _elicitationWho(call, assistantMessage) {
   const enabled = _enabledToolsAt(assistantMessage ? assistantMessage.id : null);
@@ -2717,7 +2839,13 @@ function _elicitationWho(call, assistantMessage) {
   if (entry && entry.source === "ask_user") {
     return "The assistant is asking";
   }
-  const label = (entry && (entry.server || entry.sourceLabel)) || (entry && entry.source) || call.name || "A tool";
+  // Prefer a meaningful group label (an MCP server, or a non-generic source
+  // label), then the tool's own name. A bare "built-in" is not worth showing over
+  // the tool name, so it is skipped.
+  const groupLabel = entry && entry.server;
+  const sourceLabel = (entry && entry.sourceLabel && entry.sourceLabel !== "built-in") ? entry.sourceLabel : null;
+  const toolName = (entry && (entry.title || entry.name)) || call.name;
+  const label = groupLabel || sourceLabel || toolName || "A tool";
   return label + " is asking";
 }
 
@@ -2972,6 +3100,19 @@ function _buildElicitationField(fieldName, prop, isRequired, elicit, requestSend
         return isNaN(parsed) ? undefined : parsed;
       };
       input.addEventListener("input", emitChange);
+    } else if (prop.format === "multiline" || prop.multiline) {
+      // A multi-line string renders as a textarea, so long or structured content
+      // (e.g. a disclosure the user reviews and edits before it is shared) is fully
+      // visible and editable rather than crammed into a single line.
+      const input = document.createElement("textarea");
+      input.className = "tool-elic-input tool-elic-textarea";
+      input.id = controlId;
+      input.rows = 8;
+      input.spellcheck = false;
+      if (stored !== undefined && stored !== null) { input.value = String(stored); }
+      wrap.appendChild(input);
+      getValue = () => (input.value === "" ? undefined : input.value);
+      input.addEventListener("input", emitChange);
     } else {
       const input = document.createElement("input");
       input.type = _elicInputType(prop.format);
@@ -3135,14 +3276,14 @@ function _buildElicitationForm(call, assistantMessage, runtime) {
   bar.className = "tool-elicitation-bar";
   const skipButton = document.createElement("button");
   skipButton.className = "tool-approval-button";
-  skipButton.textContent = "Skip";
-  skipButton.title = "Continue without answering this question.";
+  skipButton.textContent = schema.declineLabel || "Skip";
+  skipButton.title = schema.declineLabel || "Continue without answering this question.";
   skipButton.addEventListener("click", () => _resolveElicitation(call.id, "decline"));
   bar.appendChild(skipButton);
   sendButton = document.createElement("button");
   sendButton.className = "tool-approval-button primary";
-  sendButton.textContent = "Send";
-  sendButton.title = "Send your answer to the assistant.";
+  sendButton.textContent = schema.submitLabel || "Send";
+  sendButton.title = schema.submitLabel || "Send your answer to the assistant.";
   sendButton.addEventListener("click", () => _submitElicitation(call.id, controls));
   bar.appendChild(sendButton);
   form.appendChild(bar);
@@ -3399,6 +3540,7 @@ function _rerunToolCall(assistantMessage, call, statusLabel) {
     server: entry.server,
     toolName: entry.name,
     arguments: call.arguments || {},
+    activePath: activePath.slice(),
   });
 }
 
@@ -3685,6 +3827,7 @@ function _runToolCalls(message, pending, enabled) {
       server: entry.server,
       toolName: entry.name,
       arguments: call.arguments || {},
+      activePath: activePath.slice(),
     });
   }
   _setToolState(message.id, "running");
@@ -6199,6 +6342,9 @@ window.addEventListener("message", (event) => {
       break;
     case "toolElicit":
       _handleToolElicit(message);
+      break;
+    case "toolSessionApply":
+      _handleToolSessionApply(message);
       break;
     case "toolSettings":
       _toolAutoApprove = Boolean(message.autoApprove);

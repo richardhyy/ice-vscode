@@ -999,6 +999,13 @@ hr {
 .tool-elicitation-message {
     color: var(--vscode-foreground);
     font-size: 0.95em;
+    /* Messages can be multi-line (e.g. a recall preview of what would be shared),
+       so keep their line breaks and let a long one scroll rather than push the
+       decline/approve controls out of reach. */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 40vh;
+    overflow-y: auto;
 }
 
 .tool-elicitation-fields {
@@ -1051,6 +1058,15 @@ hr {
     outline: 1px solid var(--vscode-focusBorder);
     outline-offset: 0;
     border-color: var(--vscode-focusBorder);
+}
+
+.tool-elic-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 6em;
+    max-height: 40vh;
+    resize: vertical;
+    line-height: 1.45;
 }
 
 .tool-elic-field.invalid .tool-elic-input,

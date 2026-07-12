@@ -16,8 +16,8 @@
  * the host relays those over IPC. These are ICE tool capabilities, not anything
  * MCP-specific; the MCP bridge is just one tool that forwards them.
  *
- * Messages in:  { type: 'introspect' | 'listTools' | 'execute' | 'cancel' | 'elicitResult', requestID, ... }
- * Messages out: { type: 'definition' | 'tools' | 'result' | 'progress' | 'elicit' | 'toolsError' | 'error', requestID, ... }
+ * Messages in:  { type: 'introspect' | 'listTools' | 'execute' | 'cancel' | 'elicitResult' | 'sessionApplyResult', requestID, ... }
+ * Messages out: { type: 'definition' | 'tools' | 'result' | 'progress' | 'elicit' | 'sessionApply' | 'toolsError' | 'error', requestID, ... }
  */
 
 const toolPath = process.env.ICE_TOOL_PATH;
@@ -59,10 +59,12 @@ const activeCalls = new Map();
  * capability, offered uniformly to every tool (built-in, custom, or the MCP
  * bridge); each method is optional for a tool to use and a no-op-safe if unused.
  */
-function buildContext(requestID, config) {
+function buildContext(requestID, config, session) {
   const controller = new AbortController();
-  const entry = { controller, elicitations: new Map(), elicitCounter: 0 };
+  const entry = { controller, elicitations: new Map(), elicitCounter: 0, sessionApplies: new Map(), applyCounter: 0 };
   activeCalls.set(requestID, entry);
+
+  const sessionInfo = session || {};
 
   return {
     config: config || {},
@@ -90,6 +92,31 @@ function buildContext(requestID, config) {
         process.send({ type: 'elicit', requestID, elicitationID, message: message == null ? '' : String(message), fields: fields || {} });
       });
     },
+    // The current conversation this call belongs to. The read fields describe
+    // where it lives (so a tool can read the file itself, or other `.chat` files
+    // in the workspace) and which thread the user is viewing. `apply` is the only
+    // way to *change* it: the tool never writes directly, it asks the editor to,
+    // so every change stays visible in the transcript and undoable in one step.
+    session: {
+      file: sessionInfo.file || null,
+      dir: sessionInfo.dir || null,
+      workspaceFolders: Array.isArray(sessionInfo.workspaceFolders) ? sessionInfo.workspaceFolders : [],
+      activePath: Array.isArray(sessionInfo.activePath) ? sessionInfo.activePath : [],
+      // Ask the editor to apply message operations to the current conversation
+      // (e.g. { op: 'edit', id, content } or { op: 'delete', id }). Resolves with
+      // { ok, results: [{ id, op, ok, error? }] }. Mirrors elicit: the host relays
+      // the request and the answer comes back over IPC.
+      apply(operations) {
+        if (controller.signal.aborted || !process.send) {
+          return Promise.resolve({ ok: false, error: 'The call was stopped.' });
+        }
+        const applyID = 'ap-' + (entry.applyCounter++);
+        return new Promise((resolve) => {
+          entry.sessionApplies.set(applyID, resolve);
+          process.send({ type: 'sessionApply', requestID, applyID, operations: Array.isArray(operations) ? operations : [] });
+        });
+      },
+    },
   };
 }
 
@@ -103,6 +130,13 @@ function endCall(requestID) {
   for (const resolve of entry.elicitations.values()) {
     try {
       resolve({ action: 'cancel' });
+    } catch (_error) {
+      // ignore
+    }
+  }
+  for (const resolve of entry.sessionApplies.values()) {
+    try {
+      resolve({ ok: false, error: 'The call ended before the change was applied.' });
     } catch (_error) {
       // ignore
     }
@@ -130,6 +164,23 @@ process.on('message', async (message) => {
           // ignore
         }
       }
+      for (const [id, resolve] of [...entry.sessionApplies]) {
+        entry.sessionApplies.delete(id);
+        try {
+          resolve({ ok: false, error: 'The call was stopped.' });
+        } catch (_error) {
+          // ignore
+        }
+      }
+    }
+    return;
+  }
+  if (message.type === 'sessionApplyResult') {
+    const entry = activeCalls.get(requestID);
+    const resolve = entry && entry.sessionApplies.get(message.applyID);
+    if (resolve) {
+      entry.sessionApplies.delete(message.applyID);
+      resolve(message.result || { ok: false });
     }
     return;
   }
@@ -159,8 +210,9 @@ process.on('message', async (message) => {
       process.send({ type: 'tools', requestID, tools: Array.isArray(tools) ? tools : [] });
     } else if (message.type === 'execute') {
       // `context` carries this call's capabilities (config, cancellation signal,
-      // progress, elicitation). It is always torn down when the call settles.
-      const context = buildContext(requestID, message.config);
+      // progress, elicitation, and the current session). It is always torn down
+      // when the call settles.
+      const context = buildContext(requestID, message.config, message.session);
       try {
         const result = isSource
           ? await tool.call(message.name, message.arguments || {}, context)
