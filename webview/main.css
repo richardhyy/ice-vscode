@@ -859,7 +859,7 @@ hr {
     gap: 0.35em;
     font-size: 0.82em;
     line-height: 1.6;
-    padding: 0.15em 0.5em;
+    padding: 0.15em 0.3em 0.15em 0.65em;
     border-radius: var(--border-radius-pill, 999px);
     border: 1px solid transparent;
     background-color: color-mix(in srgb, var(--vscode-foreground) 7%, transparent);
@@ -876,6 +876,14 @@ hr {
 .composer-tools-pill:focus-visible {
     outline: 1px solid var(--vscode-focusBorder);
     outline-offset: 1px;
+}
+
+.composer-tools-pill:not(.is-active) {
+    padding-right: 0.65em;
+}
+
+.composer-tools-count:empty {
+    display: none;
 }
 
 .composer-tools-count:not(:empty) {
@@ -2666,7 +2674,7 @@ body.rubber-banding .config-content * {
     align-items: center;
     gap: 0.35em;
     max-width: 16em;
-    padding: 0.15em 0.5em;
+    padding: 0.15em 0.65em;
     font: inherit;
     font-size: 0.82em;
     line-height: 1.6;
