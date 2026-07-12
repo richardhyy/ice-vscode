@@ -10,6 +10,7 @@ It offers a unique combination of features that make it stand out from other LLM
 - **Conversation Management**: Store your AI conversations as editable .chat files
 - **Tree-Structured Conversations**: Fork and edit messages to explore different paths
 - **Multi-Provider Support**: Use multiple LLM providers in a single interface, including custom providers
+- **Tool Calling**: Let models call your JavaScript tools and Model Context Protocol (MCP) servers
 - **Advanced Features**: Fork conversations, edit inline configurations, and use message snippets for efficient interactions
 
 ## Key Features
@@ -21,6 +22,7 @@ It offers a unique combination of features that make it stand out from other LLM
 - Inline configuration editing and switching
 - Message snippets for quick prompt insertion
 - Instant Chat feature for rapid LLM interactions
+- Call tools and MCP servers, including your own JavaScript tools
 - Create custom LLM providers using JavaScript
 
 ## Why ICE?

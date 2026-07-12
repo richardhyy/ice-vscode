@@ -13,6 +13,7 @@
   - [インスタントチャット](/ja/instant-chat.md)
 - 高度なトピック
   - [カスタムプロバイダー](/ja/custom-providers.md)
+  - [カスタムツール](/ja/custom-tools.md)
   - [プロバイダー設定](/ja/provider-configurations.md)
 - [よくある質問](/ja/faq.md)
 - [貢献](/ja/contributing.md)

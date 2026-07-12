@@ -24,6 +24,8 @@ You take full control over what goes to the model. A conversation is a tree you 
   - [Editing Messages](#editing-messages)
   - [Inline Configuration Editing](#inline-configuration-editing)
   - [Message Snippets](#message-snippets)
+  - [Tool Calling and MCP](#tool-calling-and-mcp)
+  - [System Prompt Variables](#system-prompt-variables)
 - [Requirements](#requirements)
 - [Extension Settings](#extension-settings)
 - [Creating Custom Providers](#creating-custom-providers)
@@ -46,10 +48,15 @@ You take full control over what goes to the model. A conversation is a tree you 
   - Resend/regenerate
   - Inline configuration editing and switching
   - Changes are saved to the `.chat` file
-- Attachments support for multimodal models
+- Tool calling with native JavaScript tools and Model Context Protocol (MCP) servers
+  - Approve calls before they run; every call and result is an editable node
+- Reasoning (thinking) display for providers that support it
+- Per-message metadata: model, token usage, and a context-changed indicator
+- Multi-select, copy, paste, and insert messages, including across `.chat` files
+- Attachments support for multimodal models
 - Message snippets for quickly inserting prompts
 - Instant Chat feature for quickly chatting with LLMs
-- Create custom LLM providers using JavaScript
+- Create custom LLM providers and tools using JavaScript
 - Configure API keys and settings for built-in providers
 
 ## Basic Usage
@@ -75,7 +82,7 @@ If you've enabled the `Use Previous Provider For New Chat` setting, ICE will aut
 
 ### Forking Conversations
 
-Right-click on a message, then select "Duplicate" to create a fork of the conversation. You can then edit the messages and continue the conversation from that point.
+Right-click on a message, then select "Fork" to create a fork of the conversation. You can then edit the messages and continue the conversation from that point.
 
 You can switch between branches by clicking "Branches" below a message, then selecting the desired branch.
 
@@ -97,7 +104,7 @@ Selecting a chat provider from the right side of the VSCode status bar will crea
 
 Inline configuration editing applies to messages after the card.
 
-You can also right-click on any message and select "Insert Configuration" to quickly add a configuration card to the chat view.
+You can also right-click on any message and select "Insert Config Update" to quickly add a configuration card to the chat view.
 
 Autocompletion is available for configuration keys, and forking is supported for configuration changes.
 
@@ -114,6 +121,18 @@ When typing a message, you can enter `/YourSnippetName` to insert the snippet.
 Right-click on a message editor and select "Manage Snippets" to view, edit, and delete snippets.
 
 ![Message Snippet](docs/images/snippet.png)
+
+### Tool Calling and MCP
+
+ICE can let a model call tools and use the results in its reply. A tool is a small JavaScript file you can open, read, and edit, and ICE ships with a built-in `fetch_url` tool.
+
+Enable tools for a conversation from the **Tools** control in the message box. Your selection is saved as a node in the `.chat` file, so it stays visible, editable, and forkable.
+
+By default, ICE asks for approval before running a tool and records every call and result as a node in the conversation.
+
+You can also connect **Model Context Protocol (MCP)** servers with the `ICE: Add MCP Server` command or the `ice.mcpServers` setting, and their tools become available to the model.
+
+> See [Custom Tools](docs/custom-tools.md) to write your own.
 
 ### System Prompt Variables
 
@@ -145,6 +164,9 @@ Additionally, ICE provides several **extension configuration options**:
 
 * `Instant Chat Session Folder`: Specify a custom folder to store Instant Chat sessions. Leave empty to use the default location.
 * `Use Previous Provider For New Chat`: When checked, ICE will automatically select the previously used provider when starting a new chat.
+* `MCP Servers`: Define Model Context Protocol servers whose tools ICE can call. Reference secrets with `${env:VAR}`, and pin an exact version for `npx` servers.
+* `Tools: Auto Approve`: Run tool calls without asking for approval first. Off by default; ICE always records each call and result either way.
+* `Tools: Max Auto Iterations`: How many consecutive tool-call rounds ICE runs automatically before pausing to ask whether to continue (default 8).
 
 You can access these settings through VSCode's settings interface.
 
@@ -154,15 +176,20 @@ ICE supports custom LLM providers written in JavaScript. Provider scripts use a 
 
 > Take a look at the [Built-in Providers](https://github.com/richardhyy/ice-vscode/tree/main/providers) for examples.
 
+## Creating Custom Tools
+
+ICE tools are small JavaScript files with a similar header format: a tool describes its arguments and returns a result the model can use. See [Custom Tools](docs/custom-tools.md) to get started.
+
 ## Known Issues
 
-As ICE is in early development, you may encounter bugs or instability. If you experience any issues, please file a report on the GitHub repository. Pull requests are also welcome!
+ICE is pre-1.0 and still evolving, so you may hit rough edges. If you experience any issues, please file a report on the GitHub repository. Pull requests are also welcome!
 
 ## Planned Enhancements
 
-- [ ] Rendering performance optimizations
 - [ ] Search, tagging, and filtering of chat histories
 - [ ] Visualization of conversation trees
+- [x] Tool calling and MCP support
+- [x] Rendering performance optimizations
 - [x] In context updating of provider configuration
 - [x] UI improvements
 

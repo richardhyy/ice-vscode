@@ -7,7 +7,7 @@ ICE provides powerful tools for exploring different conversation paths and refin
 ## Forking Conversations
 
 1. Right-click on any message in the chat.
-2. Select "Duplicate" to create a new branch from that point.
+2. Select "Fork" to create a new branch from that point.
 3. Continue the conversation in the new branch.
 
 ## Switching Branches

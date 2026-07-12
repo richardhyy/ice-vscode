@@ -1,5 +1,34 @@
 # Change Log
 
+## [0.7.0] - 2026-07-12
+
+Since 0.6.0, this release adds tool calling with the Model Context Protocol, reasoning display, per-message metadata, richer message editing, and a redesigned provider configuration experience.
+
+### Added
+- Tool calling: models can call tools and use the results in their answer.
+  - Native JavaScript tools you can open, read, and edit, in the same spirit as providers. A built-in `fetch_url` tool ships with ICE.
+  - Model Context Protocol (MCP) support: connect stdio or HTTP MCP servers through the `ice.mcpServers` setting and expose their tools to the model.
+  - Tool selection for a conversation is recorded as an editable, forkable node in the `.chat` file.
+  - Tool calls ask for approval by default, and every call and result is recorded as a node. Settings control auto-approval (`ice.tools.autoApprove`) and how many consecutive tool rounds run before pausing (`ice.tools.maxAutoIterations`).
+  - New commands: "ICE: Enable Tools" and "ICE: Add MCP Server".
+- Reasoning (thinking) output is streamed and shown for providers that expose it.
+- Per-message metadata: each reply shows the model and time, with a hover popover for provider, token usage, temperature, and system prompt. A quiet indicator flags replies whose context has since changed.
+- Multi-select messages with copy, paste, and insert, including copy and paste between different `.chat` files.
+- Branch switching preview: hovering a sibling branch previews its continuation before you switch.
+- Provider option selection and a composer quick-tune bar for adjusting per-message settings (for example the model) inline.
+- Service presets for the OpenAI-compatible provider (OpenAI, Ollama, LM Studio, OpenRouter, Groq, DeepSeek, and more) with an optional custom Base URL.
+
+### Changed
+- Redesigned the OpenAI-compatible provider configuration around friendly presets and a clearer configuration menu; global configuration changes can be synced into an open conversation.
+- Removed the custom message-variable substitution (the old `$name` config token and `{{name}}` placeholders in user messages). System prompt environment variables (such as `{{DATE_TODAY}}`) are unchanged.
+- Refreshed the built-in providers and removed the redundant Zhipu provider.
+- Replaced the double delete confirmation with a lighter inline prompt.
+- Streaming replies now render incrementally, updating in place as text arrives instead of re-rendering on every token, with quiet typing and thinking feedback that respects reduced-motion settings.
+
+### Fixed
+- Provider HTTP errors are no longer silently dropped. The error is shown and recorded on the reply itself, so it persists in the `.chat` file.
+- Improved text contrast in configuration nodes to meet WCAG AA.
+
 ## [0.6.0] - 2024-07-22
 
 ### Added

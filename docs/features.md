@@ -14,6 +14,9 @@ Explore different conversation paths and refine your interactions. Fork conversa
 ## [Inline Configuration](inline-configuration.md)
 Modify chat provider settings and switch between providers within a single conversation. This powerful feature allows you to take advantage of the strengths of different models and adjust parameters on the fly.
 
+## [Tool Calling](custom-tools.md)
+Let the model call tools and use the results in its answer. ICE ships with a built-in `fetch_url` tool, runs your own JavaScript tools, and connects to Model Context Protocol (MCP) servers. Tool calls ask for approval by default, and every call and result is saved as an editable node in the `.chat` file.
+
 ## [Message Snippets](message-snippets.md)
 Save time and maintain consistency in your LLM interactions with message snippets. Quickly insert frequently used prompts or text patterns.
 

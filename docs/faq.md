@@ -36,7 +36,10 @@ A: Yes, you can edit both your messages and AI responses by right-clicking on a 
 ## Features
 
 ### Q: What is forking and how do I use it?
-A: Forking allows you to create alternative paths in a conversation. Right-click on a message and select "Duplicate" to create a new branch from that point.
+A: Forking allows you to create alternative paths in a conversation. Right-click on a message and select "Fork" to create a new branch from that point.
+
+### Q: Can models use tools or MCP servers?
+A: Yes. Enable tools from the Tools control in the message box. ICE includes a built-in `fetch_url` tool, runs your own JavaScript tools, and connects to Model Context Protocol (MCP) servers configured in settings. Tool calls ask for approval by default. See [Custom Tools](custom-tools.md).
 
 ### Q: How do message snippets work?
 A: Message snippets are shortcuts for frequently used text. Create them by selecting text, right-clicking, and choosing "Create Snippet". Use them by typing `/` followed by the snippet name.
