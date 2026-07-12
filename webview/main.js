@@ -72,6 +72,14 @@ let snippets = {}; // {completion: content}
 let globalUndoLock = null;
 let contextMenuTargetElement = null;
 
+// The completion currently cancelable from the progress indicator, and the one
+// the user has already asked to stop (kept so the Stop control can hold a steady
+// "Stopping" state while a few final chunks stream in before the provider closes).
+let _cancelableRequestID = null;
+let _cancelRequestedID = null;
+// Last state rendered onto the Stop control, so per-token refreshes are no-ops.
+let _cancelButtonRendered = null; // null | "hidden" | "stop" | "stopping"
+
 let _editingMessageAttachments = {}; // {messageID: [attachment1, attachment2, ...]}
 
 // --- Message selection state -------------------------------------------------
@@ -121,19 +129,74 @@ function setProgressIndicator(text, cancelableRequestID) {
   } else {
     container.classList.remove("show");
   }
-  const cancelButton = document.getElementById("progress-cancel-button");
-  if (cancelableRequestID) {
-    cancelButton.onclick = () => {
-      vscode.postMessage({
-        type: "cancelRequest",
-        requestID: cancelableRequestID,
-      });
-    };
-    cancelButton.classList.add("show");
-  } else {
-    cancelButton.onclick = null;
-    cancelButton.classList.remove("show");
+
+  // Track the request that can currently be stopped. When it clears or changes,
+  // drop any pending "Stopping" state so the control is fresh for the next one.
+  _cancelableRequestID = cancelableRequestID || null;
+  if (_cancelRequestedID && _cancelRequestedID !== _cancelableRequestID) {
+    _cancelRequestedID = null;
   }
+  _refreshCancelButton();
+}
+
+/**
+ * Asks the extension to stop the in-flight completion, if any, and moves the
+ * Stop control into a steady, disabled "Stopping" state until the provider
+ * actually closes (a few final chunks may still stream in meanwhile). Safe to
+ * call when nothing is running.
+ * @returns {boolean} True when a cancelable request was found and stopped.
+ */
+function requestCancelActiveCompletion() {
+  if (!_cancelableRequestID || _cancelRequestedID === _cancelableRequestID) {
+    return false;
+  }
+  vscode.postMessage({
+    type: "cancelRequest",
+    requestID: _cancelableRequestID,
+  });
+  _cancelRequestedID = _cancelableRequestID;
+  _refreshCancelButton();
+  return true;
+}
+
+/**
+ * Reflects the current request / stopping state onto the Stop control: its
+ * label, icon, tooltip, disabled state and click handler. Idempotent and cheap
+ * to call on every streamed token: the DOM is only rewritten when the derived
+ * state ("hidden" / "stop" / "stopping") actually changes.
+ */
+function _refreshCancelButton() {
+  const cancelButton = document.getElementById("progress-cancel-button");
+  if (!cancelButton) {
+    return;
+  }
+  let desired;
+  if (!_cancelableRequestID) {
+    desired = "hidden";
+  } else if (_cancelRequestedID === _cancelableRequestID) {
+    desired = "stopping";
+  } else {
+    desired = "stop";
+  }
+  if (desired === _cancelButtonRendered) {
+    return;
+  }
+  _cancelButtonRendered = desired;
+
+  if (desired === "hidden") {
+    cancelButton.classList.remove("show", "stopping");
+    cancelButton.onclick = null;
+    return;
+  }
+  const stopping = desired === "stopping";
+  cancelButton.innerHTML =
+    icons.ICON_STOP_FILL + "<span>" + (stopping ? "Stopping\u2026" : "Stop") + "</span>";
+  cancelButton.disabled = stopping;
+  cancelButton.classList.toggle("stopping", stopping);
+  cancelButton.classList.add("show");
+  cancelButton.title = stopping ? "Stopping the response" : "Stop generating (Esc)";
+  cancelButton.setAttribute("aria-label", stopping ? "Stopping response" : "Stop generating");
+  cancelButton.onclick = stopping ? null : requestCancelActiveCompletion;
 }
 
 /**
@@ -6266,8 +6329,35 @@ document.addEventListener('keydown', function (event) {
   // editors or menus when nothing is selected).
   if (event.key === "Escape" && selectedMessageIDs.size > 0) {
     _clearSelection();
+    return;
+  }
+
+  // With nothing selected, Escape stops an in-flight response, mirroring the
+  // Stop button. Guarded so it never hijacks Escape from a focused editor,
+  // input, or open menu (where Escape means dismiss/blur).
+  if (event.key === "Escape" && _cancelableRequestID && !_isEditingContextFocused()) {
+    if (requestCancelActiveCompletion()) {
+      event.preventDefault();
+    }
   }
 });
+
+/**
+ * True when focus sits in a text-editing context (CodeMirror, input, textarea,
+ * or contenteditable), where Escape must keep its native meaning.
+ * @returns {boolean}
+ */
+function _isEditingContextFocused() {
+  const el = document.activeElement;
+  if (!el || el === document.body) {
+    return false;
+  }
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable) {
+    return true;
+  }
+  return Boolean(el.closest && el.closest(".cm-editor"));
+}
 
 document.addEventListener('contextmenu', function (event) {
   contextMenuTargetElement = event.target;

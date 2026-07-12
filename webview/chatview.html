@@ -12,8 +12,8 @@
       </div>
     </div>
 
-    <div class="progress-container">
-      <div class="progressing-indicator">
+    <div class="progress-container" role="status" aria-live="polite">
+      <div class="progressing-indicator" aria-hidden="true">
         <span class="dot"></span>
         <span class="dot"></span>
         <span class="dot"></span>
@@ -21,8 +21,8 @@
       <div class="progress-label">
         Text Completion in Progress
       </div>
-      <div id="progress-cancel-button" class="progress-cancel-button" title="Cancel">
-      </div>
+      <button id="progress-cancel-button" type="button" class="progress-cancel-button" title="Stop generating (Esc)" aria-label="Stop generating">
+      </button>
     </div>
 
     <div id="ruler-container">

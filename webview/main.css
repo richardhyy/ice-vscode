@@ -52,7 +52,6 @@
     --branch-switch-button-icon-color: var(--vscode-button-foreground);
     --progress-label-color: var(--vscode-editor-foreground);
     --progressing-indicator-dot-color: var(--vscode-editor-foreground);
-    --progress-cancel-button-background-color: var(--vscode-button-secondaryBackground);
 
     --fs-body: 1em;
     --fs-footnote: 0.8em;
@@ -2212,45 +2211,78 @@ hr {
 
 .progress-container {
     position: fixed;
-    bottom: 0;
-    left: 0;
+    bottom: var(--padding);
+    left: var(--padding);
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 0.5em;
-    padding: var(--padding);
-    transform: translateY(100%);
+    gap: 0.55em;
+    padding: 0.4em 0.6em 0.4em 0.85em;
+    background-color: var(--vscode-editorWidget-background);
+    border: 1px solid var(--vscode-editorWidget-border, transparent);
+    border-radius: var(--border-radius-pill);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow-color) 28%, transparent);
+    transform: translateY(6px);
     opacity: 0;
-    transition: transform 0.3s var(--default-cubic-bezier), opacity 0.3s var(--default-cubic-bezier);
+    pointer-events: none;
+    transition: transform 0.25s var(--default-cubic-bezier), opacity 0.25s var(--default-cubic-bezier);
 }
 
 .progress-container.show {
     transform: translateY(0);
     opacity: 1;
+    pointer-events: auto;
 }
 
 .progress-container .progress-label {
     font-size: var(--fs-footnote);
     color: var(--progress-label-color);
+    white-space: nowrap;
 }
 
+/* The Stop control is a quiet, borderless action, not a nested box: just the
+   stop glyph and label in a muted tone, brightening on hover. A hairline
+   divider (not an enclosing border) sets it apart from the status text. */
 .progress-cancel-button {
-    border-radius: var(--border-radius-small);
-    width: 0.75em;
-    height: 0.75em;
-    background-color: var(--progress-cancel-button-background-color);
+    display: none;
+    align-items: center;
+    gap: 0.3em;
+    padding: 0.1em 0.15em 0.1em 0.55em;
+    margin-left: 0.15em;
+    font-size: var(--fs-footnote);
+    line-height: 1;
     border: none;
-    margin-left: 0.3em;
-    transform: translateY(1%);
-    transition: all 0.1s var(--default-cubic-bezier);
+    border-left: 1px solid var(--vscode-editorWidget-border, transparent);
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+    transition: color 0.12s var(--default-cubic-bezier);
 }
 
-.progress-cancel-button:hover {
-    filter: brightness(90%);
+.progress-cancel-button.show {
+    display: inline-flex;
 }
 
-.progress-cancel-button:active {
-    filter: brightness(80%);
+.progress-cancel-button:hover:not(:disabled),
+.progress-cancel-button:focus-visible {
+    color: var(--vscode-foreground);
+}
+
+.progress-cancel-button:disabled {
+    opacity: 0.75;
+    cursor: default;
+}
+
+.progress-cancel-button:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 2px;
+    border-radius: var(--border-radius-small);
+}
+
+.progress-cancel-button svg {
+    width: 0.85em;
+    height: 0.85em;
+    flex-shrink: 0;
 }
 
 .progressing-indicator {
@@ -2277,6 +2309,13 @@ hr {
 
 .progressing-indicator .dot:nth-child(3) {
     animation-delay: 0.4s;
+}
+
+/* Motion is feedback only: the dots settle to a steady state when reduced. */
+@media (prefers-reduced-motion: reduce) {
+    .progressing-indicator .dot {
+        animation: none;
+    }
 }
 
 #back-to-bottom {
