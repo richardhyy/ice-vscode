@@ -55,8 +55,12 @@ let _toolAutoApprove = false;      // ice.tools.autoApprove (approval on when fa
 let _toolMaxAutoIterations = 8;    // ice.tools.maxAutoIterations (loop cap)
 let _toolAutoRunCount = 0;         // consecutive auto tool rounds since last user send
 let _pendingToolRequests = {};     // requestID -> { assistantID, call }
-let _toolOrchestration = {};       // assistantID -> 'awaiting-approval' | 'running' | 'capped'
+let _toolOrchestration = {};       // assistantID -> 'awaiting-approval' | 'running' | 'capped' | 'stopped-continue'
 let _toolRequestCounter = 0;
+// Per-call live runtime while a tool executes: progress, cancellation, and any
+// open elicitation form. Keyed by call id; cleared when the result lands.
+let _toolRuntime = {};             // callID -> { requestID, assistantID, call, startedAt, status, progress, elicit }
+let _toolTicker = null;            // shared 1s interval that refreshes running elapsed labels
 // Composer Tools control: the draft tool selection per (shadow) message, plus a
 // cache of the tools available to enable (built-in + MCP), fetched from the host.
 let _composerToolSelection = {};
@@ -2316,22 +2320,24 @@ function _formatToolArgs(args) {
 
 /**
  * Renders one tool call the model emitted as a visible, collapsible block. Its
- * status (requested / ran / failed) is derived from whether a matching tool
- * result node exists, so the block reflects where the call is in its lifecycle.
- * The arguments can be edited in place (like a config node) and the call re-run.
+ * status (requested / running / ran / failed / stopped) is derived from the live
+ * runtime and any matching tool-result node, so the block always reflects where
+ * the call is in its lifecycle. While running it shows progress and a Stop; while
+ * a tool is asking for input it shows an elicitation form. The arguments can be
+ * edited in place (like a config node) and the call re-run.
  * @param {Object} call - { id, name, arguments }
  * @param {Object} assistantMessage - the assistant turn that emitted the call
  * @returns {HTMLElement}
  */
 function _createToolCallBlock(call, assistantMessage) {
+  const runtime = _toolRuntime[call.id];
   const result = _findToolResult(call.id);
-  const status = !result
-    ? "pending"
-    : (result.customFields && result.customFields.isError ? "failed" : "done");
+  const status = _toolCallStatus(call, runtime, result);
+  const active = status === "running" || status === "stopping";
 
   const block = document.createElement("details");
   block.className = "tool-call-block tool-call-" + status;
-  block.open = status === "pending";
+  block.open = status === "pending" || active || Boolean(runtime && runtime.elicit);
   block.dataset.callId = call.id;
 
   const summary = document.createElement("summary");
@@ -2339,9 +2345,7 @@ function _createToolCallBlock(call, assistantMessage) {
 
   const icon = document.createElement("span");
   icon.className = "tool-call-icon";
-  icon.innerHTML = status === "failed"
-    ? icons.ICON_TOOL_FAILED
-    : status === "done" ? icons.ICON_TOOL_USED : icons.ICON_TOOL;
+  icon.innerHTML = _toolCallIcon(status);
   summary.appendChild(icon);
 
   const name = document.createElement("span");
@@ -2351,8 +2355,27 @@ function _createToolCallBlock(call, assistantMessage) {
 
   const label = document.createElement("span");
   label.className = "tool-call-status-label";
-  label.textContent = status === "pending" ? "Requested" : status === "failed" ? "Failed" : "Ran";
+  label.setAttribute("aria-live", "polite");
+  label.textContent = _toolCallStatusLabel(status, runtime);
   summary.appendChild(label);
+
+  // A running call can be stopped straight from its summary. The click is kept
+  // from toggling the <details> so Stop stops rather than collapses.
+  if (active) {
+    const stop = document.createElement("button");
+    stop.type = "button";
+    stop.className = "tool-call-stop";
+    stop.innerHTML = icons.ICON_STOP_FILL + "<span>Stop</span>";
+    stop.title = "Stop waiting for this tool. A remote server may keep running its work.";
+    stop.setAttribute("aria-label", "Stop " + (call.name || "tool"));
+    stop.disabled = status === "stopping";
+    stop.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      _stopToolCall(call.id);
+    });
+    summary.appendChild(stop);
+  }
 
   block.appendChild(summary);
 
@@ -2363,21 +2386,720 @@ function _createToolCallBlock(call, assistantMessage) {
   args.appendChild(code);
   block.appendChild(args);
 
-  // In-block actions (revealed when the block is expanded): edit the arguments
-  // and re-run the call. Kept quiet so transparency never becomes clutter.
-  const actions = document.createElement("div");
-  actions.className = "tool-call-actions";
+  // Live progress while running (hidden while a form is showing, to keep focus).
+  if (active && !(runtime && runtime.elicit)) {
+    block.appendChild(_buildToolProgress(runtime && runtime.progress));
+  }
 
-  actions.appendChild(_toolCallActionButton(icons.ICON_PENCIL, "Edit arguments", () => {
-    _beginToolCallArgEdit(block, args, actions, assistantMessage, call);
-  }));
-  actions.appendChild(_toolCallActionButton(icons.ICON_ARROW_REPEAT, result ? "Run again" : "Run", () => {
-    _rerunToolCall(assistantMessage, call, label);
-  }));
+  // An open elicitation form: the tool is asking the user for input.
+  if (runtime && runtime.elicit) {
+    block.appendChild(_buildElicitationForm(call, assistantMessage, runtime));
+  }
 
-  block.appendChild(actions);
+  // In-block actions (edit arguments / re-run), for a settled call only. Kept
+  // quiet so transparency never becomes clutter.
+  if (!active) {
+    const actions = document.createElement("div");
+    actions.className = "tool-call-actions";
+    actions.appendChild(_toolCallActionButton(icons.ICON_PENCIL, "Edit arguments", () => {
+      _beginToolCallArgEdit(block, args, actions, assistantMessage, call);
+    }));
+    actions.appendChild(_toolCallActionButton(icons.ICON_ARROW_REPEAT, result ? "Run again" : "Run", () => {
+      _rerunToolCall(assistantMessage, call, label);
+    }));
+    block.appendChild(actions);
+  }
 
   return block;
+}
+
+/** Derives a tool call's lifecycle status from its live runtime and result node. */
+function _toolCallStatus(call, runtime, result) {
+  if (runtime && (runtime.status === "running" || runtime.status === "stopping")) {
+    return runtime.status;
+  }
+  if (!result) {
+    return "pending";
+  }
+  const cf = result.customFields || {};
+  if (cf.stopped) {
+    return cf.timedOut ? "timedout" : "stopped";
+  }
+  return cf.isError ? "failed" : "done";
+}
+
+/** The summary icon for a tool-call status (a spinner while active). */
+function _toolCallIcon(status) {
+  if (status === "running" || status === "stopping") {
+    return '<span class="tool-call-spinner" aria-hidden="true"></span>';
+  }
+  if (status === "failed") {
+    return icons.ICON_TOOL_FAILED;
+  }
+  if (status === "stopped" || status === "timedout") {
+    return icons.ICON_DASH_CIRCLE;
+  }
+  if (status === "done") {
+    return icons.ICON_TOOL_USED;
+  }
+  return icons.ICON_TOOL;
+}
+
+/** The trailing status label for a tool-call block. */
+function _toolCallStatusLabel(status, runtime) {
+  switch (status) {
+    case "running":
+      return (runtime && runtime.elicit) ? "Waiting for you" : ("Running \u00b7 " + _formatElapsed(runtime ? Date.now() - runtime.startedAt : 0));
+    case "stopping": return "Stopping\u2026";
+    case "stopped": return "Stopped";
+    case "timedout": return "Timed out";
+    case "failed": return "Failed";
+    case "done": return "Ran";
+    default: return "Requested";
+  }
+}
+
+/** Formats an elapsed duration compactly ("4s", "1m 05s"). */
+function _formatElapsed(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) {
+    return seconds + "s";
+  }
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes + "m " + (rest < 10 ? "0" : "") + rest + "s";
+}
+
+/**
+ * Builds the progress track shown while a tool runs. A server that reports a
+ * `total` gets a determinate fill; otherwise an indeterminate bar (the graceful
+ * default, since most tools report nothing). Any progress `message` is shown
+ * beneath, replacing in place.
+ */
+function _buildToolProgress(progress) {
+  const wrap = document.createElement("div");
+  wrap.className = "tool-call-progress";
+  wrap.setAttribute("role", "status");
+  wrap.setAttribute("aria-live", "polite");
+
+  const track = document.createElement("div");
+  track.className = "tool-call-progress-track";
+  const fill = document.createElement("div");
+  fill.className = "tool-call-progress-fill";
+
+  const hasTotal = progress && typeof progress.total === "number" && progress.total > 0 && typeof progress.progress === "number";
+  if (hasTotal) {
+    fill.style.width = Math.max(0, Math.min(100, (progress.progress / progress.total) * 100)) + "%";
+  } else {
+    fill.classList.add("indeterminate");
+  }
+  track.appendChild(fill);
+  wrap.appendChild(track);
+
+  const messageText = (progress && progress.message) ? String(progress.message) : "";
+  if (messageText) {
+    const line = document.createElement("div");
+    line.className = "tool-call-progress-message";
+    line.textContent = messageText;
+    wrap.appendChild(line);
+  }
+  return wrap;
+}
+
+/** Finds a tool-call block element by its call id. */
+function _toolBlockEl(callID) {
+  const selector = '.tool-call-block[data-call-id="' + ((window.CSS && CSS.escape) ? CSS.escape(String(callID)) : String(callID)) + '"]';
+  return document.querySelector(selector);
+}
+
+/** Rebuilds a tool-call block in place from its current runtime + result. */
+function _replaceToolBlock(callID) {
+  const runtime = _toolRuntime[callID];
+  const el = _toolBlockEl(callID);
+  if (!runtime || !el) {
+    return;
+  }
+  const assistant = flatMessages[runtime.assistantID] || { id: runtime.assistantID };
+  el.replaceWith(_createToolCallBlock(runtime.call, assistant));
+}
+
+// --- Tool-call live progress, cancellation, elicitation ---------------------
+
+/** Starts the shared 1s ticker that refreshes running elapsed labels. */
+function _startToolTicker() {
+  if (_toolTicker) {
+    return;
+  }
+  _toolTicker = setInterval(_tickToolTimers, 1000);
+}
+
+/** Stops the shared ticker. */
+function _stopToolTicker() {
+  if (_toolTicker) {
+    clearInterval(_toolTicker);
+    _toolTicker = null;
+  }
+}
+
+/** Stops the ticker if nothing is running. */
+function _stopToolTickerIfIdle() {
+  const anyRunning = Object.keys(_toolRuntime).some((id) => {
+    const runtime = _toolRuntime[id];
+    return runtime && (runtime.status === "running" || runtime.status === "stopping");
+  });
+  if (!anyRunning) {
+    _stopToolTicker();
+  }
+}
+
+/** Refreshes the elapsed label of each running call (only that text node). */
+function _tickToolTimers() {
+  let any = false;
+  for (const callID in _toolRuntime) {
+    const runtime = _toolRuntime[callID];
+    if (!runtime || (runtime.status !== "running" && runtime.status !== "stopping")) {
+      continue;
+    }
+    any = true;
+    if (runtime.elicit || runtime.status === "stopping") {
+      continue;
+    }
+    const block = _toolBlockEl(callID);
+    const label = block && block.querySelector(".tool-call-status-label");
+    if (label) {
+      label.textContent = "Running \u00b7 " + _formatElapsed(Date.now() - runtime.startedAt);
+    }
+  }
+  if (!any) {
+    _stopToolTicker();
+  }
+}
+
+/** Requests cancellation of a running tool call (a stop, not an error). */
+function _stopToolCall(callID) {
+  const runtime = _toolRuntime[callID];
+  if (!runtime || runtime.status === "stopping") {
+    return;
+  }
+  runtime.status = "stopping";
+  // Stopping also cancels any open elicitation for the call.
+  if (runtime.elicit) {
+    vscode.postMessage({ type: "toolElicitResult", requestID: runtime.requestID, elicitationID: runtime.elicit.elicitationID, action: "cancel" });
+    runtime.elicit = null;
+  }
+  _replaceToolBlock(callID);
+  vscode.postMessage({ type: "cancelTool", requestID: runtime.requestID });
+}
+
+/** Applies a progress update to a running call's block, in place. */
+function _handleToolProgress(message) {
+  const pending = _pendingToolRequests[message.requestID];
+  if (!pending) {
+    return;
+  }
+  const runtime = _toolRuntime[pending.call.id];
+  if (!runtime) {
+    return;
+  }
+  runtime.progress = message.progress || {};
+  if (runtime.elicit) {
+    // A form is showing; hold the progress display until it closes.
+    return;
+  }
+  const block = _toolBlockEl(pending.call.id);
+  if (!block) {
+    return;
+  }
+  const fresh = _buildToolProgress(runtime.progress);
+  const existing = block.querySelector(".tool-call-progress");
+  if (existing) {
+    existing.replaceWith(fresh);
+  } else {
+    const args = block.querySelector(".tool-call-args");
+    if (args && args.after) {
+      args.after(fresh);
+    } else {
+      block.appendChild(fresh);
+    }
+  }
+}
+
+/** Surfaces a tool's elicitation request as an in-conversation form. */
+function _handleToolElicit(message) {
+  const pending = _pendingToolRequests[message.requestID];
+  const runtime = pending && _toolRuntime[pending.call.id];
+  if (!pending || !runtime) {
+    // No live call to attach this to; decline so the tool isn't left hanging.
+    vscode.postMessage({ type: "toolElicitResult", requestID: message.requestID, elicitationID: message.elicitationID, action: "cancel" });
+    return;
+  }
+  runtime.elicit = {
+    elicitationID: message.elicitationID,
+    message: message.message || "",
+    schema: message.schema || { type: "object", properties: {} },
+    values: {},
+  };
+  _replaceToolBlock(pending.call.id);
+  const block = _toolBlockEl(pending.call.id);
+  const firstField = block && block.querySelector(".tool-elic-input, .tool-elic-select, .tool-elic-check");
+  if (firstField) {
+    setTimeout(() => { try { firstField.focus(); } catch (e) { /* ignore */ } }, 0);
+  }
+}
+
+/** The provenance line for an elicitation form ("who is asking"). */
+function _elicitationWho(call, assistantMessage) {
+  const enabled = _enabledToolsAt(assistantMessage ? assistantMessage.id : null);
+  const entry = _findEnabledEntry(enabled, call.name);
+  if (entry && entry.source === "ask_user") {
+    return "The assistant is asking";
+  }
+  const label = (entry && (entry.server || entry.sourceLabel)) || (entry && entry.source) || call.name || "A tool";
+  return label + " is asking";
+}
+
+/** Maps a string schema `format` to an input type. */
+function _elicInputType(format) {
+  switch (format) {
+    case "email": return "email";
+    case "uri": return "url";
+    case "date": return "date";
+    case "date-time": return "datetime-local";
+    default: return "text";
+  }
+}
+
+/** True if a string parses as a URL. */
+function _isValidUri(value) {
+  try {
+    new URL(value);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Builds one form control for an elicitation field from its schema, returning
+ * the wrapper plus a value getter, a validator, and a change subscription. The
+ * current value is mirrored into `elicit.values` so the form survives a re-render
+ * (e.g. when a sibling tool call settles) without losing what the user typed.
+ */
+function _buildElicitationField(fieldName, prop, isRequired, elicit, requestSend) {
+  const wrap = document.createElement("div");
+  wrap.className = "tool-elic-field";
+
+  const type = prop.type || "string";
+  const controlId = "elic-" + String(fieldName).replace(/[^\w-]/g, "_") + "-" + Math.random().toString(36).slice(2, 7);
+  const title = prop.title || fieldName;
+  const stored = (elicit.values && fieldName in elicit.values) ? elicit.values[fieldName] : (prop.default !== undefined ? prop.default : undefined);
+
+  const changeHandlers = [];
+  let getValue = () => undefined;
+
+  const errorLine = document.createElement("div");
+  errorLine.className = "tool-elic-error";
+  errorLine.style.display = "none";
+
+  const emitChange = () => {
+    elicit.values[fieldName] = getValue();
+    changeHandlers.forEach((handler) => handler());
+  };
+
+  if (type === "boolean") {
+    const row = document.createElement("label");
+    row.className = "tool-elic-field-row";
+    row.setAttribute("for", controlId);
+    const control = document.createElement("input");
+    control.type = "checkbox";
+    control.className = "tool-elic-check";
+    control.id = controlId;
+    control.checked = Boolean(stored);
+    const text = document.createElement("span");
+    text.className = "tool-elic-label";
+    text.textContent = title;
+    if (isRequired) {
+      const req = document.createElement("span");
+      req.className = "tool-elic-required";
+      req.textContent = " (required)";
+      text.appendChild(req);
+    }
+    row.appendChild(control);
+    row.appendChild(text);
+    wrap.appendChild(row);
+    getValue = () => control.checked;
+    control.addEventListener("change", emitChange);
+  } else {
+    const labelEl = document.createElement("label");
+    labelEl.className = "tool-elic-label";
+    labelEl.setAttribute("for", controlId);
+    labelEl.textContent = title;
+    if (isRequired) {
+      const req = document.createElement("span");
+      req.className = "tool-elic-required";
+      req.textContent = " *";
+      labelEl.appendChild(req);
+    }
+    wrap.appendChild(labelEl);
+
+    if (Array.isArray(prop.enum) && prop.enum.length) {
+      // A choice field. `allowCustom` (set by ICE tools like ask_user, never by a
+      // strict MCP enum) adds an "Other" option so the user is not boxed in.
+      const allowCustom = Boolean(prop.allowCustom);
+      const optionLabel = (i, value) => (Array.isArray(prop.enumNames) && prop.enumNames[i] != null) ? String(prop.enumNames[i]) : String(value);
+      let selectedIndex = -1;
+      let customMode = false;
+      if (stored !== undefined) {
+        const idx = prop.enum.findIndex((v) => String(v) === String(stored));
+        if (idx >= 0) { selectedIndex = idx; }
+        else if (allowCustom) { customMode = true; }
+      }
+      let customInput = null;
+      let refreshSelection = () => {};
+
+      getValue = () => {
+        if (customMode) {
+          return (customInput && customInput.value !== "") ? customInput.value : undefined;
+        }
+        return selectedIndex >= 0 ? prop.enum[selectedIndex] : undefined;
+      };
+
+      const makeCustomInput = () => {
+        customInput = document.createElement("input");
+        customInput.type = "text";
+        customInput.className = "tool-elic-input tool-elic-other-input";
+        customInput.placeholder = "Type your answer\u2026";
+        if (customMode && stored !== undefined) { customInput.value = String(stored); }
+        customInput.addEventListener("input", emitChange);
+        wrap.appendChild(customInput);
+      };
+
+      if (prop.enum.length <= 5) {
+        // A short list is a vertical stack of full-width options (so long labels
+        // stay readable). Click to choose; the chosen option shows a send arrow,
+        // and clicking it again sends. The Send button stays available either way.
+        const group = document.createElement("div");
+        group.className = "tool-elic-choices";
+        group.setAttribute("role", "radiogroup");
+        const options = [];
+        prop.enum.forEach((value, i) => {
+          const option = document.createElement("button");
+          option.type = "button";
+          option.className = "tool-elic-option";
+          option.setAttribute("role", "radio");
+          option.title = "Click to choose. Click again to send.";
+          const optLabel = document.createElement("span");
+          optLabel.className = "tool-elic-option-label";
+          optLabel.textContent = optionLabel(i, value);
+          option.appendChild(optLabel);
+          const sendHint = document.createElement("span");
+          sendHint.className = "tool-elic-option-send";
+          sendHint.setAttribute("aria-hidden", "true");
+          sendHint.innerHTML = icons.ICON_ARROW_RIGHT;
+          option.appendChild(sendHint);
+          option.addEventListener("click", () => {
+            if (selectedIndex === i && !customMode) {
+              if (requestSend) { requestSend(); }
+              return;
+            }
+            selectedIndex = i;
+            customMode = false;
+            refreshSelection();
+            emitChange();
+          });
+          options.push(option);
+          group.appendChild(option);
+        });
+        let otherOption = null;
+        if (allowCustom) {
+          otherOption = document.createElement("button");
+          otherOption.type = "button";
+          otherOption.className = "tool-elic-option tool-elic-option-other";
+          otherOption.setAttribute("role", "radio");
+          otherOption.title = "Type your own answer.";
+          const otherLabel = document.createElement("span");
+          otherLabel.className = "tool-elic-option-label";
+          otherLabel.textContent = "Other\u2026";
+          otherOption.appendChild(otherLabel);
+          otherOption.addEventListener("click", () => {
+            customMode = true;
+            selectedIndex = -1;
+            refreshSelection();
+            emitChange();
+            if (customInput) { setTimeout(() => customInput.focus(), 0); }
+          });
+          group.appendChild(otherOption);
+        }
+        wrap.appendChild(group);
+        if (allowCustom) { makeCustomInput(); }
+
+        refreshSelection = () => {
+          options.forEach((option, i) => {
+            const on = selectedIndex === i && !customMode;
+            option.classList.toggle("selected", on);
+            option.setAttribute("aria-checked", on ? "true" : "false");
+          });
+          if (otherOption) {
+            otherOption.classList.toggle("selected", customMode);
+            otherOption.setAttribute("aria-checked", customMode ? "true" : "false");
+          }
+          if (customInput) { customInput.style.display = customMode ? "" : "none"; }
+        };
+        refreshSelection();
+      } else {
+        const select = document.createElement("select");
+        select.className = "tool-elic-select";
+        select.id = controlId;
+        if (!isRequired || (selectedIndex < 0 && !customMode)) {
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = isRequired ? "Select\u2026" : "(none)";
+          select.appendChild(opt);
+        }
+        prop.enum.forEach((value, i) => {
+          const opt = document.createElement("option");
+          opt.value = String(i);
+          opt.textContent = optionLabel(i, value);
+          if (selectedIndex === i) { opt.selected = true; }
+          select.appendChild(opt);
+        });
+        if (allowCustom) {
+          const opt = document.createElement("option");
+          opt.value = "__other__";
+          opt.textContent = "Other\u2026";
+          if (customMode) { opt.selected = true; }
+          select.appendChild(opt);
+        }
+        wrap.appendChild(select);
+        if (allowCustom) { makeCustomInput(); }
+
+        refreshSelection = () => {
+          if (customInput) { customInput.style.display = customMode ? "" : "none"; }
+        };
+        select.addEventListener("change", () => {
+          if (select.value === "__other__") {
+            customMode = true;
+            selectedIndex = -1;
+          } else if (select.value === "") {
+            customMode = false;
+            selectedIndex = -1;
+          } else {
+            customMode = false;
+            selectedIndex = Number(select.value);
+          }
+          refreshSelection();
+          emitChange();
+          if (customMode && customInput) { setTimeout(() => customInput.focus(), 0); }
+        });
+        refreshSelection();
+      }
+    } else if (type === "number" || type === "integer") {
+      const input = document.createElement("input");
+      input.type = "number";
+      input.className = "tool-elic-input";
+      input.id = controlId;
+      if (typeof prop.minimum === "number") { input.min = String(prop.minimum); }
+      if (typeof prop.maximum === "number") { input.max = String(prop.maximum); }
+      if (type === "integer") { input.step = "1"; }
+      if (stored !== undefined && stored !== null) { input.value = String(stored); }
+      wrap.appendChild(input);
+      getValue = () => {
+        if (input.value === "") { return undefined; }
+        const parsed = type === "integer" ? parseInt(input.value, 10) : parseFloat(input.value);
+        return isNaN(parsed) ? undefined : parsed;
+      };
+      input.addEventListener("input", emitChange);
+    } else {
+      const input = document.createElement("input");
+      input.type = _elicInputType(prop.format);
+      input.className = "tool-elic-input";
+      input.id = controlId;
+      if (stored !== undefined && stored !== null) { input.value = String(stored); }
+      wrap.appendChild(input);
+      getValue = () => (input.value === "" ? undefined : input.value);
+      input.addEventListener("input", emitChange);
+    }
+  }
+
+  if (prop.description) {
+    const desc = document.createElement("div");
+    desc.className = "tool-elic-desc";
+    desc.textContent = prop.description;
+    wrap.appendChild(desc);
+  }
+  wrap.appendChild(errorLine);
+
+  const validate = (show) => {
+    const value = getValue();
+    let error = "";
+    if (isRequired && (value === undefined || value === "")) {
+      error = "Required.";
+    } else if ((type === "number" || type === "integer") && value !== undefined) {
+      if (typeof prop.minimum === "number" && value < prop.minimum) {
+        error = "Must be \u2265 " + prop.minimum + ".";
+      } else if (typeof prop.maximum === "number" && value > prop.maximum) {
+        error = "Must be \u2264 " + prop.maximum + ".";
+      }
+    } else if (type === "string" && typeof value === "string" && value) {
+      if (prop.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+        error = "Enter a valid email address.";
+      } else if (prop.format === "uri" && !_isValidUri(value)) {
+        error = "Enter a valid URL.";
+      }
+    }
+    if (show) {
+      if (error) {
+        errorLine.textContent = error;
+        errorLine.style.display = "";
+        wrap.classList.add("invalid");
+      } else {
+        errorLine.style.display = "none";
+        wrap.classList.remove("invalid");
+      }
+    }
+    return !error;
+  };
+
+  return {
+    name: fieldName,
+    wrap: wrap,
+    get: getValue,
+    validate: validate,
+    onChange: (handler) => changeHandlers.push(handler),
+  };
+}
+
+/** Reads and validates every field, returning validity plus the content object. */
+function _collectElicitation(controls, showErrors) {
+  let valid = true;
+  const content = {};
+  controls.forEach((control) => {
+    if (!control.validate(showErrors)) {
+      valid = false;
+    }
+    const value = control.get();
+    if (value !== undefined && value !== "") {
+      content[control.name] = value;
+    }
+  });
+  return { valid: valid, content: content };
+}
+
+/** Sends an accept if the form validates. */
+function _submitElicitation(callID, controls) {
+  const collected = _collectElicitation(controls, true);
+  if (!collected.valid) {
+    return;
+  }
+  _resolveElicitation(callID, "accept", collected.content);
+}
+
+/** Resolves an open elicitation with an action, returning the call to running. */
+function _resolveElicitation(callID, action, content) {
+  const runtime = _toolRuntime[callID];
+  if (!runtime || !runtime.elicit) {
+    return;
+  }
+  vscode.postMessage({
+    type: "toolElicitResult",
+    requestID: runtime.requestID,
+    elicitationID: runtime.elicit.elicitationID,
+    action: action,
+    content: action === "accept" ? (content || {}) : undefined,
+  });
+  runtime.elicit = null;
+  if (runtime.status === "running") {
+    _replaceToolBlock(callID);
+    _startToolTicker();
+  }
+}
+
+/**
+ * Builds the in-conversation elicitation form: a program asking the human for
+ * input, shown where the pause originates. Provenance (who is asking) and a clear
+ * decline/dismiss path are structural, not decorative: elicitation must never be
+ * a trap. The three exits map 1:1 to the protocol (accept / decline / cancel).
+ */
+function _buildElicitationForm(call, assistantMessage, runtime) {
+  const elicit = runtime.elicit;
+  const schema = elicit.schema || { type: "object", properties: {} };
+  const properties = schema.properties || {};
+  const required = Array.isArray(schema.required) ? schema.required : [];
+
+  const form = document.createElement("div");
+  form.className = "tool-elicitation";
+  form.setAttribute("role", "group");
+
+  const header = document.createElement("div");
+  header.className = "tool-elicitation-header";
+  const headerIcon = document.createElement("span");
+  headerIcon.className = "tool-elicitation-icon";
+  headerIcon.innerHTML = icons.ICON_QUESTION_CIRCLE;
+  header.appendChild(headerIcon);
+  const who = document.createElement("span");
+  who.className = "tool-elicitation-who";
+  who.textContent = _elicitationWho(call, assistantMessage);
+  header.appendChild(who);
+  form.setAttribute("aria-label", who.textContent);
+  form.appendChild(header);
+
+  if (elicit.message) {
+    const messageEl = document.createElement("div");
+    messageEl.className = "tool-elicitation-message";
+    messageEl.textContent = elicit.message;
+    form.appendChild(messageEl);
+  }
+
+  const fieldsWrap = document.createElement("div");
+  fieldsWrap.className = "tool-elicitation-fields";
+  form.appendChild(fieldsWrap);
+
+  let controls = [];
+  let sendButton;
+  const requestSend = () => {
+    if (sendButton && !sendButton.disabled) {
+      _submitElicitation(call.id, controls);
+    }
+  };
+
+  controls = Object.keys(properties).map((fieldName) => {
+    const built = _buildElicitationField(fieldName, properties[fieldName] || {}, required.includes(fieldName), elicit, requestSend);
+    fieldsWrap.appendChild(built.wrap);
+    return built;
+  });
+
+  const bar = document.createElement("div");
+  bar.className = "tool-elicitation-bar";
+  const skipButton = document.createElement("button");
+  skipButton.className = "tool-approval-button";
+  skipButton.textContent = "Skip";
+  skipButton.title = "Continue without answering this question.";
+  skipButton.addEventListener("click", () => _resolveElicitation(call.id, "decline"));
+  bar.appendChild(skipButton);
+  sendButton = document.createElement("button");
+  sendButton.className = "tool-approval-button primary";
+  sendButton.textContent = "Send";
+  sendButton.title = "Send your answer to the assistant.";
+  sendButton.addEventListener("click", () => _submitElicitation(call.id, controls));
+  bar.appendChild(sendButton);
+  form.appendChild(bar);
+
+  const revalidate = () => {
+    sendButton.disabled = !_collectElicitation(controls, false).valid;
+  };
+  controls.forEach((control) => control.onChange(revalidate));
+  revalidate();
+
+  form.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target && event.target.tagName !== "TEXTAREA" && !event.shiftKey) {
+      event.preventDefault();
+      if (!sendButton.disabled) {
+        _submitElicitation(call.id, controls);
+      }
+    }
+  });
+
+  return form;
 }
 
 /** Builds a quiet icon button for the tool-call block's action row. */
@@ -2604,9 +3326,9 @@ function _rerunToolCall(assistantMessage, call, statusLabel) {
   }
   const requestID = "tool-" + Date.now() + "-" + _toolRequestCounter++;
   _pendingToolRequests[requestID] = { assistantID: message.id, call: call, rerun: true };
-  if (statusLabel) {
-    statusLabel.textContent = "Running\u2026";
-  }
+  _toolRuntime[call.id] = { requestID: requestID, assistantID: message.id, call: call, startedAt: Date.now(), status: "running", progress: null, elicit: null };
+  _replaceToolBlock(call.id);
+  _startToolTicker();
   vscode.postMessage({
     type: "executeTool",
     requestID: requestID,
@@ -2635,15 +3357,17 @@ function _appendToolCallBlocks(messageContent, message) {
  * editable rather than hidden runtime machinery.
  */
 function _renderToolNode(messageNode, message, clipContent, editing) {
-  const isError = Boolean(message.customFields && message.customFields.isError);
-  const toolName = (message.customFields && message.customFields.toolName) || "tool";
+  const cf = message.customFields || {};
+  const isError = Boolean(cf.isError);
+  const stopped = Boolean(cf.stopped);
+  const toolName = cf.toolName || "tool";
 
   const header = document.createElement("div");
   header.className = "tool-node-header";
 
   const icon = document.createElement("span");
-  icon.className = "tool-node-icon" + (isError ? " tool-node-icon-error" : "");
-  icon.innerHTML = isError ? icons.ICON_TOOL_FAILED : icons.ICON_TOOL_SUCCESS;
+  icon.className = "tool-node-icon" + (isError ? " tool-node-icon-error" : (stopped ? " tool-node-icon-stopped" : ""));
+  icon.innerHTML = isError ? icons.ICON_TOOL_FAILED : (stopped ? icons.ICON_DASH_CIRCLE : icons.ICON_TOOL_SUCCESS);
   header.appendChild(icon);
 
   const name = document.createElement("span");
@@ -2881,16 +3605,16 @@ function _maybeHandleToolCalls(message) {
 /** Requests execution of each pending tool call for an assistant turn. */
 function _runToolCalls(message, pending, enabled) {
   _toolAutoRunCount++;
-  _setToolState(message.id, "running");
   for (const call of pending) {
     const entry = _findEnabledEntry(enabled, call.name);
     if (!entry) {
-      // The tool is no longer enabled here — record an error result in its place.
+      // The tool is no longer enabled here; record an error result in its place.
       _upsertToolResult(message, call, true, `Tool "${call.name}" is not available.`);
       continue;
     }
     const requestID = "tool-" + Date.now() + "-" + _toolRequestCounter++;
     _pendingToolRequests[requestID] = { assistantID: message.id, call: call };
+    _toolRuntime[call.id] = { requestID: requestID, assistantID: message.id, call: call, startedAt: Date.now(), status: "running", progress: null, elicit: null };
     vscode.postMessage({
       type: "executeTool",
       requestID: requestID,
@@ -2900,6 +3624,8 @@ function _runToolCalls(message, pending, enabled) {
       arguments: call.arguments || {},
     });
   }
+  _setToolState(message.id, "running");
+  _startToolTicker();
   _maybeContinueAfterTools(message.id);
 }
 
@@ -2910,12 +3636,14 @@ function _handleToolResult(message) {
     return;
   }
   delete _pendingToolRequests[message.requestID];
+  delete _toolRuntime[pending.call.id];
+  _stopToolTickerIfIdle();
   const assistant = flatMessages[pending.assistantID];
   if (!assistant) {
     return;
   }
-  _upsertToolResult(assistant, pending.call, message.isError, message.text);
-  // A manual re-run is a contained action — it refreshes the result but never
+  _upsertToolResult(assistant, pending.call, message.isError, message.text, { stopped: message.stopped, timedOut: message.timedOut });
+  // A manual re-run is a contained action: it refreshes the result but never
   // drives the conversation forward on its own.
   if (!pending.rerun) {
     _maybeContinueAfterTools(pending.assistantID);
@@ -2925,18 +3653,21 @@ function _handleToolResult(message) {
 /**
  * Records a tool call's result: updates the existing `tool` node in place when
  * one exists (a re-run), otherwise creates and persists a new node chained after
- * the assistant turn (the first run).
+ * the assistant turn (the first run). `flags` marks a stopped / timed-out call so
+ * it renders as a neutral user choice rather than an error.
  */
-function _upsertToolResult(assistantMessage, call, isError, text) {
+function _upsertToolResult(assistantMessage, call, isError, text, flags) {
+  flags = flags || {};
+  const buildFields = (base) => {
+    const fields = { ...(base || {}), toolCallID: call.id, toolName: call.name, isError: Boolean(isError) };
+    if (flags.stopped) { fields.stopped = true; } else { delete fields.stopped; }
+    if (flags.timedOut) { fields.timedOut = true; } else { delete fields.timedOut; }
+    return fields;
+  };
   const existing = _findToolResult(call.id);
   if (existing) {
     existing.content = text || "";
-    existing.customFields = {
-      ...(existing.customFields || {}),
-      toolCallID: call.id,
-      toolName: call.name,
-      isError: Boolean(isError),
-    };
+    existing.customFields = buildFields(existing.customFields);
     existing.timestamp = new Date().toISOString();
     updateFlatMessages(existing);
     vscode.postMessage({
@@ -2954,7 +3685,7 @@ function _upsertToolResult(assistantMessage, call, isError, text) {
     content: text || "",
     parentID: _toolChainTail(assistantMessage.id),
     timestamp: new Date().toISOString(),
-    customFields: { toolCallID: call.id, toolName: call.name, isError: Boolean(isError) },
+    customFields: buildFields(null),
   };
   updateFlatMessages(node);
   addMessage(node);
@@ -2983,6 +3714,17 @@ function _maybeContinueAfterTools(assistantID) {
     return;
   }
 
+  // If the user stopped any call, don't drive the conversation forward on its
+  // own; a Stop should feel like a stop. Offer an explicit Continue instead.
+  const anyStopped = toolCalls.some((call) => {
+    const result = _findToolResult(call.id);
+    return result && result.customFields && result.customFields.stopped;
+  });
+  if (anyStopped) {
+    _setToolState(assistantID, "stopped-continue");
+    return;
+  }
+
   _clearToolState(assistantID);
   const tail = flatMessages[_toolChainTail(assistantID)];
   if (tail) {
@@ -2990,13 +3732,44 @@ function _maybeContinueAfterTools(assistantID) {
   }
 }
 
-/** Renders the approval / running / continue affordance beneath tool calls. */
+/** Renders the approval / continue affordance beneath tool calls. */
 function _appendToolOrchestrationBar(messageContent, message) {
   const state = _toolOrchestration[message.id];
   if (!state) {
     return;
   }
+  // A running turn now shows progress and Stop per call; no aggregate bar.
+  if (state === "running") {
+    return;
+  }
+
   const toolCalls = (message.customFields && message.customFields.toolCalls) || [];
+
+  // After the user stopped a call, offer an explicit Continue rather than
+  // auto-continuing, so a Stop genuinely stops.
+  if (state === "stopped-continue") {
+    const bar = document.createElement("div");
+    bar.className = "tool-approval-bar";
+    const label = document.createElement("span");
+    label.className = "tool-approval-label";
+    label.textContent = "Stopped.";
+    bar.appendChild(label);
+    bar.appendChild(_toolBarButton("Continue", "primary", () => {
+      _toolAutoRunCount = 0;
+      _clearToolState(message.id);
+      const tail = flatMessages[_toolChainTail(message.id)];
+      if (tail) {
+        sendMessage(tail, true);
+      }
+    }));
+    bar.appendChild(_toolBarButton("Leave", "", () => {
+      _clearToolState(message.id);
+      rerenderMessage(message.id);
+    }));
+    messageContent.appendChild(bar);
+    return;
+  }
+
   const pending = toolCalls.filter((call) => !_findToolResult(call.id));
   if (pending.length === 0) {
     return;
@@ -3008,12 +3781,6 @@ function _appendToolOrchestrationBar(messageContent, message) {
   const label = document.createElement("span");
   label.className = "tool-approval-label";
   bar.appendChild(label);
-
-  if (state === "running") {
-    label.textContent = "Running tool" + (pending.length > 1 ? "s" : "") + "\u2026";
-    messageContent.appendChild(bar);
-    return;
-  }
 
   if (state === "capped") {
     label.textContent = "Paused after " + _toolMaxAutoIterations + " automatic tool rounds.";
@@ -5363,6 +6130,12 @@ window.addEventListener("message", (event) => {
       break;
     case "toolResult":
       _handleToolResult(message);
+      break;
+    case "toolProgress":
+      _handleToolProgress(message);
+      break;
+    case "toolElicit":
+      _handleToolElicit(message);
       break;
     case "toolSettings":
       _toolAutoApprove = Boolean(message.autoApprove);

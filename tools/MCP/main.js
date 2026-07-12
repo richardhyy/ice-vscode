@@ -34,6 +34,7 @@ const path = require('path');
 const { Client } = require('@modelcontextprotocol/sdk/client/index.js');
 const { StdioClientTransport, getDefaultEnvironment } = require('@modelcontextprotocol/sdk/client/stdio.js');
 const { StreamableHTTPClientTransport } = require('@modelcontextprotocol/sdk/client/streamableHttp.js');
+const { ElicitRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
 
 const CLIENT_NAME = 'ice';
 const CLIENT_VERSION = '1.0';
@@ -169,7 +170,26 @@ async function ensureConnected(serverId, config) {
     }
 
     const transport = createTransport(serverId, config || {});
-    const client = new Client({ name: CLIENT_NAME, version: CLIENT_VERSION }, { capabilities: {} });
+
+    // The stack of tool-call contexts currently executing against this server.
+    // A server's elicitation request is not tied to a specific call in the
+    // protocol, so we route it to the most recently started call (the common
+    // case is one at a time), forwarding to ICE's own `context.elicit`.
+    const activeContexts = [];
+    const client = new Client({ name: CLIENT_NAME, version: CLIENT_VERSION }, { capabilities: { elicitation: {} } });
+    client.setRequestHandler(ElicitRequestSchema, async (request) => {
+      const ctx = activeContexts[activeContexts.length - 1];
+      if (!ctx || typeof ctx.elicit !== 'function') {
+        return { action: 'decline' };
+      }
+      const params = request.params || {};
+      const outcome = await ctx.elicit(params.message || '', params.requestedSchema || {});
+      if (outcome && outcome.action === 'accept') {
+        return { action: 'accept', content: outcome.content || {} };
+      }
+      return { action: (outcome && outcome.action === 'decline') ? 'decline' : 'cancel' };
+    });
+
     try {
       await client.connect(transport);
     } catch (error) {
@@ -188,7 +208,7 @@ async function ensureConnected(serverId, config) {
     }
 
     const tools = await discoverTools(client);
-    const connection = { client, transport, configHash: hash, tools };
+    const connection = { client, transport, configHash: hash, tools, activeContexts };
     connections.set(serverId, connection);
     return connection;
   })().finally(() => connecting.delete(serverId));
@@ -289,11 +309,36 @@ async function call(name, args, context) {
     return { content: (error && error.message) || String(error), isError: true };
   }
 
+  // Translate ICE's tool context onto the MCP call: the cancellation signal
+  // aborts the request (the SDK then sends notifications/cancelled), and server
+  // progress notifications are forwarded to ICE's progress channel. Elicitation
+  // is handled by the connection's request handler, routed to this context.
+  const options = {};
+  if (context && context.signal) {
+    options.signal = context.signal;
+  }
+  if (context && typeof context.progress === 'function') {
+    options.onprogress = (update) => {
+      try {
+        context.progress(update);
+      } catch (_error) {
+        // ignore
+      }
+    };
+    options.resetTimeoutOnProgress = true;
+  }
+
+  connection.activeContexts.push(context);
   try {
-    const result = await connection.client.callTool({ name: target.toolName, arguments: args || {} });
+    const result = await connection.client.callTool({ name: target.toolName, arguments: args || {} }, undefined, options);
     return { content: contentToText(result), isError: Boolean(result.isError) };
   } catch (error) {
     return { content: (error && error.message) || String(error), isError: true };
+  } finally {
+    const at = connection.activeContexts.indexOf(context);
+    if (at >= 0) {
+      connection.activeContexts.splice(at, 1);
+    }
   }
 }
 

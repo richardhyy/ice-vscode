@@ -738,6 +738,10 @@ hr {
     color: var(--error-color, var(--vscode-errorForeground));
 }
 
+.tool-node-icon-stopped {
+    color: var(--vscode-descriptionForeground);
+}
+
 .tool-node-name {
     font-family: var(--vscode-editor-font-family, monospace);
     color: var(--vscode-foreground);
@@ -834,17 +838,306 @@ hr {
     color: var(--vscode-button-foreground);
 }
 
-.tool-approval-button:hover {
+.tool-approval-button:hover:not(:disabled) {
     background: var(--vscode-button-secondaryHoverBackground);
 }
 
-.tool-approval-button.primary:hover {
+.tool-approval-button.primary:hover:not(:disabled) {
     background: var(--vscode-button-hoverBackground);
+}
+
+.tool-approval-button:disabled {
+    opacity: 0.5;
+    cursor: default;
 }
 
 .tool-approval-button:focus-visible {
     outline: 1px solid var(--vscode-focusBorder);
     outline-offset: 1px;
+}
+
+/* --- Tool-call live state: spinner, progress, Stop, stopped ---------------- */
+
+/* A small spinner shown in a running call's summary icon slot. */
+.tool-call-spinner {
+    display: inline-block;
+    width: 0.85em;
+    height: 0.85em;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--vscode-foreground) 25%, transparent);
+    border-top-color: var(--vscode-progressBar-background, var(--vscode-foreground));
+    animation: tool-call-spin 0.8s linear infinite;
+}
+
+@keyframes tool-call-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* A stopped or timed-out call is a neutral user choice, never an error. */
+.tool-call-stopped .tool-call-icon,
+.tool-call-timedout .tool-call-icon {
+    color: var(--vscode-descriptionForeground);
+}
+
+/* Stop control, kept quiet, sitting at the end of a running call's summary. */
+.tool-call-stop {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25em;
+    margin-left: 0.5em;
+    padding: 0.05em 0.45em;
+    font-size: 0.85em;
+    border: 1px solid var(--vscode-editorWidget-border, transparent);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--vscode-descriptionForeground);
+    cursor: pointer;
+}
+
+.tool-call-stop:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--vscode-foreground) 8%, transparent);
+    color: var(--vscode-foreground);
+}
+
+.tool-call-stop:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.tool-call-stop svg {
+    width: 0.8em;
+    height: 0.8em;
+}
+
+.tool-call-stop:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 1px;
+}
+
+/* Progress track: a determinate fill or an indeterminate sweep, plus a message. */
+.tool-call-progress {
+    margin-top: 0.45em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3em;
+}
+
+.tool-call-progress-track {
+    height: 3px;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+    overflow: hidden;
+}
+
+.tool-call-progress-fill {
+    height: 100%;
+    width: 0;
+    border-radius: 3px;
+    background: var(--vscode-progressBar-background, var(--vscode-foreground));
+    transition: width 0.25s var(--default-cubic-bezier, ease);
+}
+
+.tool-call-progress-fill.indeterminate {
+    width: 35%;
+    animation: tool-call-progress-sweep 1.3s ease-in-out infinite;
+}
+
+@keyframes tool-call-progress-sweep {
+    0% { margin-left: -35%; }
+    100% { margin-left: 100%; }
+}
+
+.tool-call-progress-message {
+    font-size: 0.85em;
+    color: var(--vscode-descriptionForeground);
+}
+
+/* Motion is feedback only: fall back to static indicators when reduced. */
+@media (prefers-reduced-motion: reduce) {
+    .tool-call-spinner {
+        animation: none;
+    }
+    .tool-call-progress-fill.indeterminate {
+        animation: none;
+        width: 100%;
+        opacity: 0.4;
+    }
+}
+
+/* --- Elicitation form: a program asking the human for input ---------------- */
+.tool-elicitation {
+    margin-top: 0.6em;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+    padding: 0.7em 0.8em;
+    border: 1px solid var(--vscode-editorWidget-border, rgba(128, 128, 128, 0.3));
+    border-radius: 6px;
+    background: var(--vscode-editorWidget-background, transparent);
+}
+
+.tool-elicitation-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+}
+
+.tool-elicitation-icon {
+    display: inline-flex;
+    color: var(--vscode-descriptionForeground);
+}
+
+.tool-elicitation-icon svg {
+    width: 1em;
+    height: 1em;
+}
+
+.tool-elicitation-who {
+    font-weight: 600;
+    color: var(--vscode-foreground);
+}
+
+.tool-elicitation-message {
+    color: var(--vscode-foreground);
+    font-size: 0.95em;
+}
+
+.tool-elicitation-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+}
+
+.tool-elic-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25em;
+}
+
+.tool-elic-field-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    cursor: pointer;
+}
+
+.tool-elic-label {
+    font-size: 0.9em;
+    color: var(--vscode-foreground);
+}
+
+.tool-elic-required {
+    color: var(--vscode-descriptionForeground);
+    font-weight: 400;
+}
+
+.tool-elic-desc {
+    font-size: 0.82em;
+    color: var(--vscode-descriptionForeground);
+}
+
+.tool-elic-input,
+.tool-elic-select {
+    padding: 0.35em 0.5em;
+    font-family: inherit;
+    font-size: 0.9em;
+    color: var(--vscode-input-foreground);
+    background: var(--vscode-input-background);
+    border: 1px solid var(--vscode-input-border, var(--vscode-editorWidget-border, transparent));
+    border-radius: 4px;
+}
+
+.tool-elic-input:focus-visible,
+.tool-elic-select:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 0;
+    border-color: var(--vscode-focusBorder);
+}
+
+.tool-elic-field.invalid .tool-elic-input,
+.tool-elic-field.invalid .tool-elic-select {
+    border-color: var(--vscode-inputValidation-errorBorder, var(--vscode-errorForeground));
+}
+
+.tool-elic-error {
+    font-size: 0.8em;
+    color: var(--vscode-inputValidation-errorForeground, var(--vscode-errorForeground));
+}
+
+/* A short choice list, shown as a vertical stack of full-width options. */
+.tool-elic-choices {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35em;
+}
+
+.tool-elic-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5em;
+    width: 100%;
+    padding: 0.45em 0.7em;
+    font-size: 0.9em;
+    font-family: inherit;
+    text-align: left;
+    color: var(--vscode-foreground);
+    background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent);
+    border: 1px solid var(--vscode-editorWidget-border, transparent);
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.tool-elic-option:hover {
+    background: color-mix(in srgb, var(--vscode-foreground) 11%, transparent);
+}
+
+.tool-elic-option.selected {
+    background: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border-color: var(--vscode-button-background);
+}
+
+.tool-elic-option.selected:hover {
+    background: var(--vscode-button-hoverBackground, var(--vscode-button-background));
+}
+
+.tool-elic-option:focus-visible {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: 1px;
+}
+
+.tool-elic-option-label {
+    flex: 1;
+    min-width: 0;
+}
+
+/* The send-arrow hint appears only once an option is selected: click again = send. */
+.tool-elic-option-send {
+    display: none;
+    align-items: center;
+    flex-shrink: 0;
+    opacity: 0.85;
+}
+
+.tool-elic-option.selected .tool-elic-option-send {
+    display: inline-flex;
+}
+
+.tool-elic-option-send svg {
+    width: 1em;
+    height: 1em;
+}
+
+.tool-elic-other-input {
+    margin-top: 0.4em;
+}
+
+.tool-elicitation-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5em;
 }
 
 /* Composer Tools control: a discoverable pill + inline picker in the message box. */

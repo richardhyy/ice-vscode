@@ -41,12 +41,36 @@ export interface ResolvedTool {
 export interface ToolExecResult {
   content: string;
   isError: boolean;
+  /** True when the call was stopped (by the user or a timeout) instead of completing. */
+  stopped?: boolean;
+  /** True when the stop was caused by the no-response timeout. */
+  timedOut?: boolean;
+}
+
+/**
+ * Optional capabilities a caller wires into a running tool call. These are ICE
+ * tool capabilities offered uniformly to every tool; the tool receives them as
+ * its `context` (signal / progress / elicit) and MCP is just one consumer.
+ */
+export interface ToolExecuteOptions {
+  /** Aborts the call; relayed to the tool as `context.signal`. */
+  signal?: AbortSignal;
+  /** No-response timeout in ms (progress resets it, an open elicitation suspends it). */
+  timeoutMs?: number;
+  /** Receives the tool's progress updates. */
+  onProgress?: (progress: { progress?: number; total?: number; message?: string }) => void;
+  /** Handles a tool's elicitation request, resolving with the user's response. */
+  onElicit?: (request: { elicitationID: string; message: string; schema: any }) => Promise<{ action: string; content?: any }>;
 }
 
 interface PendingRequest {
   source: string;
-  resolve: (value: any) => void;
-  reject: (error: Error) => void;
+  resolve?: (value: any) => void;
+  reject?: (error: Error) => void;
+  onResult?: (message: any) => void;
+  onError?: (error: string) => void;
+  onProgress?: (progress: any) => void;
+  onElicit?: (message: any) => void;
 }
 
 /**
@@ -132,18 +156,131 @@ export class ToolManager {
    * Executes a tool. `name` is only meaningful for dynamic sources (which tool to
    * call); a single-tool script ignores it. Failures come back as error results
    * rather than throwing, so the caller can record them on a tool-result node.
+   *
+   * `options` wires this call's live capabilities: a cancellation `signal`, a
+   * `timeoutMs` for a silent tool (progress resets it, an open elicitation
+   * suspends it), and `onProgress` / `onElicit` callbacks. A stopped or timed-out
+   * call resolves with `stopped: true` (never an error), so the UI can present it
+   * as a user choice rather than a failure.
    */
-  public async execute(source: string, name: string | null, args: any, chatDir: string | undefined): Promise<ToolExecResult> {
+  public execute(source: string, name: string | null, args: any, chatDir: string | undefined, options: ToolExecuteOptions = {}): Promise<ToolExecResult> {
     const sourcePath = this.resolveSourcePath(source, chatDir);
     if (!sourcePath) {
-      return { content: `Tool source not found: ${source}`, isError: true };
+      return Promise.resolve({ content: `Tool source not found: ${source}`, isError: true });
     }
+
+    let child: child_process.ChildProcess;
     try {
-      const result: any = await this.send(sourcePath, { type: 'execute', name, arguments: args, config: this.configForSource(sourcePath) });
-      return { content: result.content, isError: result.isError };
+      child = this.getChild(sourcePath);
     } catch (error: any) {
-      return { content: (error && error.message) || String(error), isError: true };
+      return Promise.resolve({ content: (error && error.message) || String(error), isError: true });
     }
+
+    const requestID = 'tm-' + this.counter++;
+    const timeoutMs = options.timeoutMs && options.timeoutMs > 0 ? options.timeoutMs : 60000;
+
+    return new Promise<ToolExecResult>((resolve) => {
+      let settled = false;
+      let elicitationsInFlight = 0;
+      let timer: NodeJS.Timeout | undefined;
+
+      const settle = (result: ToolExecResult) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        if (timer) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+        this.pending.delete(requestID);
+        if (options.signal) {
+          options.signal.removeEventListener('abort', onAbort);
+        }
+        resolve(result);
+      };
+
+      // (Re)arm the no-response timeout, unless an elicitation is open (the user
+      // may be filling a form): a call is only "stuck" when nothing is happening.
+      const armTimer = () => {
+        if (settled) {
+          return;
+        }
+        if (timer) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+        if (elicitationsInFlight > 0) {
+          return;
+        }
+        timer = setTimeout(() => {
+          try {
+            child.send({ type: 'cancel', requestID });
+          } catch {
+            // ignore
+          }
+          settle({ content: `Tool call stopped: no response after ${Math.round(timeoutMs / 1000)}s.`, isError: false, stopped: true, timedOut: true });
+        }, timeoutMs);
+      };
+
+      const onAbort = () => {
+        try {
+          child.send({ type: 'cancel', requestID });
+        } catch {
+          // ignore
+        }
+        settle({ content: 'Tool call stopped by the user.', isError: false, stopped: true });
+      };
+
+      if (options.signal) {
+        if (options.signal.aborted) {
+          onAbort();
+          return;
+        }
+        options.signal.addEventListener('abort', onAbort);
+      }
+
+      this.pending.set(requestID, {
+        source: sourcePath,
+        onResult: (message) => settle({ content: message.content, isError: message.isError }),
+        onError: (error) => settle({ content: error, isError: true }),
+        onProgress: (progress) => {
+          armTimer();
+          if (options.onProgress) {
+            try {
+              options.onProgress(progress || {});
+            } catch {
+              // ignore
+            }
+          }
+        },
+        onElicit: (message) => {
+          // Suspend the timeout while the user is being asked, then resume it.
+          elicitationsInFlight++;
+          armTimer();
+          const finish = (action: string, content?: any) => {
+            elicitationsInFlight = Math.max(0, elicitationsInFlight - 1);
+            armTimer();
+            try {
+              child.send({ type: 'elicitResult', requestID, elicitationID: message.elicitationID, action, content });
+            } catch {
+              // ignore
+            }
+          };
+          if (!options.onElicit) {
+            finish('cancel');
+            return;
+          }
+          const schema = this.looksLikeJsonSchema(message.fields) ? message.fields : this.argumentsToSchema(message.fields);
+          Promise.resolve(options.onElicit({ elicitationID: message.elicitationID, message: message.message, schema }))
+            .then((response) => finish((response && response.action) || 'cancel', response && response.content))
+            .catch(() => finish('cancel'));
+        },
+      });
+
+      armTimer();
+      child.send({ type: 'execute', name, arguments: args, config: this.configForSource(sourcePath), requestID });
+    });
   }
 
   /**
@@ -239,6 +376,16 @@ export class ToolManager {
     return { type: 'object', properties, required };
   }
 
+  /**
+   * True when a value is already a JSON schema object (so it can be used as-is),
+   * as opposed to ICE's friendly `arguments` map (which needs compiling). Used
+   * for elicitation, where MCP hands back a ready schema but an ICE tool may pass
+   * the same friendly shape it uses for its arguments.
+   */
+  private looksLikeJsonSchema(value: any): boolean {
+    return Boolean(value && typeof value === 'object' && value.type === 'object' && value.properties && typeof value.properties === 'object');
+  }
+
   private getChild(sourcePath: string): child_process.ChildProcess {
     const existing = this.children.get(sourcePath);
     if (existing && existing.connected) {
@@ -273,15 +420,35 @@ export class ToolManager {
     if (!pending) {
       return;
     }
+
+    // Non-terminal messages steer an in-flight execute() without settling it.
+    if (message.type === 'progress') {
+      pending.onProgress?.(message.progress || {});
+      return;
+    }
+    if (message.type === 'elicit') {
+      pending.onElicit?.(message);
+      return;
+    }
+
+    // Terminal messages: the request is done.
     this.pending.delete(message.requestID);
     if (message.type === 'definition') {
-      pending.resolve(message);
+      pending.resolve?.(message);
     } else if (message.type === 'tools') {
-      pending.resolve(message.tools);
+      pending.resolve?.(message.tools);
     } else if (message.type === 'result') {
-      pending.resolve({ content: message.content, isError: message.isError });
+      if (pending.onResult) {
+        pending.onResult(message);
+      } else {
+        pending.resolve?.({ content: message.content, isError: message.isError });
+      }
     } else if (message.type === 'toolsError' || message.type === 'error') {
-      pending.reject(new Error(message.error || 'Tool error'));
+      if (pending.onError) {
+        pending.onError(message.error || 'Tool error');
+      } else {
+        pending.reject?.(new Error(message.error || 'Tool error'));
+      }
     }
   }
 
@@ -308,7 +475,11 @@ export class ToolManager {
     for (const [requestID, pending] of [...this.pending.entries()]) {
       if (pending.source === sourcePath) {
         this.pending.delete(requestID);
-        pending.reject(error);
+        if (pending.onError) {
+          pending.onError(error.message);
+        } else if (pending.reject) {
+          pending.reject(error);
+        }
       }
     }
   }

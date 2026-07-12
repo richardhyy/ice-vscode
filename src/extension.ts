@@ -9,7 +9,7 @@ import { InstantChatManager } from './instantChatManager';
 import { SnippetManager } from './snippetManager';
 import { ROLE_ASSISTANT, STATE_KEY_PREVIOUS_PROVIDER_ID } from './constants';
 import { preprocessAttachments, buildProviderMessageTrail, resolveEnabledTools, toolDefinitionsFromEnabled } from './messageProcessing';
-import { ToolManager } from './toolManager';
+import { ToolManager, ToolExecResult } from './toolManager';
 
 /** Setting key holding the user's MCP server declarations (read by the MCP tool). */
 const MCP_SERVERS_SETTING = 'ice.mcpServers';
@@ -541,6 +541,10 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
     });
 
     let providerExecuting: Provider | null = null;
+    // In-flight tool calls for this webview, so a `cancelTool` can abort the right
+    // one and an elicitation response can be routed back to the awaiting call.
+    const toolAborters = new Map<string, AbortController>();
+    const toolElicitations = new Map<string, (response: { action: string; content?: any }) => void>();
 
     webviewPanel.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
@@ -858,25 +862,83 @@ class ChatViewProvider implements vscode.CustomReadonlyEditorProvider {
         case 'executeTool': {
           // Every tool runs through the tool substrate. New enabled entries name a
           // `source` (for MCP tools, the `MCP` dynamic source). Older chats stored
-          // MCP calls with `server`/`toolName` instead — translate those into a
-          // call on the MCP source so they keep working.
+          // MCP calls with `server`/`toolName` instead, translated into a call on
+          // the MCP source so they keep working.
           const sanitize = (value: string) => String(value).replace(/[^a-zA-Z0-9_-]/g, '_');
           const chatDir = path.dirname(chatFilePath);
-          let result: { content: string; isError: boolean };
+          const requestID: string = message.requestID;
+
+          // Wire this call's live capabilities: a cancellation signal the webview's
+          // Stop drives, progress relayed to the call's block, and elicitation
+          // requests surfaced as an in-conversation form whose answer flows back.
+          const controller = new AbortController();
+          if (requestID) {
+            toolAborters.set(requestID, controller);
+          }
+          const timeoutSeconds = getConfigurationValue<number>('tools.timeoutSeconds') ?? 60;
+          const execOptions = {
+            signal: controller.signal,
+            timeoutMs: timeoutSeconds > 0 ? timeoutSeconds * 1000 : undefined,
+            onProgress: (progress: any) => {
+              webviewPanel.webview.postMessage({ type: 'toolProgress', requestID, progress });
+            },
+            onElicit: (request: { elicitationID: string; message: string; schema: any }) => {
+              return new Promise<{ action: string; content?: any }>((resolveElicit) => {
+                toolElicitations.set(requestID + ':' + request.elicitationID, resolveElicit);
+                webviewPanel.webview.postMessage({
+                  type: 'toolElicit',
+                  requestID,
+                  elicitationID: request.elicitationID,
+                  message: request.message,
+                  schema: request.schema,
+                });
+              });
+            },
+          };
+
+          let result: ToolExecResult;
           if (message.source) {
-            result = await toolManager.execute(message.source, message.toolName || null, message.arguments || {}, chatDir);
+            result = await toolManager.execute(message.source, message.toolName || null, message.arguments || {}, chatDir, execOptions);
           } else if (message.server) {
             const qualified = `${sanitize(message.server)}__${sanitize(message.toolName)}`;
-            result = await toolManager.execute('MCP', qualified, message.arguments || {}, chatDir);
+            result = await toolManager.execute('MCP', qualified, message.arguments || {}, chatDir, execOptions);
           } else {
             result = { content: `Tool call had no source: ${message.toolName || ''}`, isError: true };
           }
+
+          if (requestID) {
+            toolAborters.delete(requestID);
+            for (const key of [...toolElicitations.keys()]) {
+              if (key.startsWith(requestID + ':')) {
+                toolElicitations.delete(key);
+              }
+            }
+          }
+
           webviewPanel.webview.postMessage({
             type: 'toolResult',
-            requestID: message.requestID,
+            requestID,
             isError: result.isError,
             text: result.content,
+            stopped: result.stopped,
+            timedOut: result.timedOut,
           });
+          break;
+        }
+        case 'cancelTool': {
+          const controller = message.requestID && toolAborters.get(message.requestID);
+          if (controller) {
+            controller.abort();
+          }
+          break;
+        }
+        case 'toolElicitResult': {
+          const key = message.requestID + ':' + message.elicitationID;
+          const resolveElicit = toolElicitations.get(key);
+          if (resolveElicit) {
+            toolElicitations.delete(key);
+            resolveElicit({ action: message.action || 'cancel', content: message.content });
+          }
           break;
         }
         case 'fetchAvailableTools': {

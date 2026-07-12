@@ -349,6 +349,12 @@
           "default": 8,
           "minimum": 1,
           "markdownDescription": "Maximum consecutive tool-call rounds ICE runs automatically before pausing to ask whether to continue."
+        },
+        "ice.tools.timeoutSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "markdownDescription": "How long ICE waits for a tool that reports no progress before stopping it, in seconds. A tool that reports progress keeps going, and an open elicitation form never times out. Set to 0 to disable the timeout (you can always stop a running call yourself)."
         }
       }
     }
