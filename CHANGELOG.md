@@ -1,5 +1,21 @@
 # Change Log
 
+## [0.7.1] - 2026-07-12
+
+### Added
+- New built-in tools for working with your conversations:
+  - `recall`: search your saved conversations (the other `.chat` files in the workspace) by message text or file name, optionally within a date range. It is read-only and stays under your control: nothing reaches the model until you review the matches and approve what to share.
+  - `session_messages`: find, read, edit, or delete messages in the current conversation. Changes are applied by the editor, shown in place, and undoable in a single step.
+- Tool elicitation: a tool can pause to ask you a short question mid-answer and continue with your reply, shown as a form. A built-in `ask_user` tool uses this directly.
+- Progress and cancellation for tool calls: long-running tools can report progress, and you can stop a tool call that is in flight.
+- After you re-run a tool, ICE now offers to let the model respond, or respond again when the result changed since its last reply.
+
+### Changed
+- Redesigned the response-cancellation experience into a single quiet progress pill with a clear Stop button that respects reduced-motion settings.
+
+### Fixed
+- Fixed a visual balance issue with the composer's tools button.
+
 ## [0.7.0] - 2026-07-12
 
 Since 0.6.0, this release adds tool calling with the Model Context Protocol, reasoning display, per-message metadata, richer message editing, and a redesigned provider configuration experience.

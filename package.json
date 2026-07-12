@@ -5,7 +5,7 @@
   "description": "Your conversations with language models, as editable, forkable .chat files in VS Code.",
   "repository": "https://github.com/richardhyy/ice-vscode",
   "publisher": "LeaForest",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.84.0"
