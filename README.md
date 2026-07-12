@@ -35,6 +35,7 @@ You take full control over what goes to the model. A conversation is a tree you 
 
 ## Features
 
+- Chat with the language models already in VS Code (GitHub Copilot and models from other extensions), with no API key to enter
 - Chat with built-in LLM providers (API keys required):
   - OpenAI
   - Anthropic
