@@ -56,6 +56,7 @@ let _toolMaxAutoIterations = 8;    // ice.tools.maxAutoIterations (loop cap)
 let _toolAutoRunCount = 0;         // consecutive auto tool rounds since last user send
 let _pendingToolRequests = {};     // requestID -> { assistantID, call }
 let _toolOrchestration = {};       // assistantID -> 'awaiting-approval' | 'running' | 'capped' | 'stopped-continue'
+let _toolRespondDismissed = new Set(); // assistantIDs whose settled-chain "Respond" offer the user dismissed this session
 let _toolRequestCounter = 0;
 // Per-call live runtime while a tool executes: progress, cancellation, and any
 // open elicitation form. Keyed by call id; cleared when the result lands.
@@ -3528,6 +3529,8 @@ function _rerunToolCall(assistantMessage, call, statusLabel) {
     }
     return;
   }
+  // A fresh re-run re-opens the "Respond" offer even if it was dismissed before.
+  _toolRespondDismissed.delete(message.id);
   const requestID = "tool-" + Date.now() + "-" + _toolRequestCounter++;
   _pendingToolRequests[requestID] = { assistantID: message.id, call: call, rerun: true };
   _toolRuntime[call.id] = { requestID: requestID, assistantID: message.id, call: call, startedAt: Date.now(), status: "running", progress: null, elicit: null };
@@ -3942,6 +3945,10 @@ function _maybeContinueAfterTools(assistantID) {
 function _appendToolOrchestrationBar(messageContent, message) {
   const state = _toolOrchestration[message.id];
   if (!state) {
+    // No transient orchestration is active, but a settled tool chain the model
+    // has not reacted to (after a manual re-run, an edited result, or a loaded
+    // leaf) would otherwise dead-end. Offer a quiet, user-initiated "Respond".
+    _appendToolRespondBar(messageContent, message);
     return;
   }
   // A running turn now shows progress and Stop per call; no aggregate bar.
@@ -4005,6 +4012,94 @@ function _appendToolOrchestrationBar(messageContent, message) {
   }));
   bar.appendChild(_toolBarButton("Skip", "", () => {
     _clearToolState(message.id);
+    rerenderMessage(message.id);
+  }));
+  messageContent.appendChild(bar);
+}
+
+/**
+ * Whether, and how, to offer letting the model respond to a settled tool chain.
+ * A manual re-run (or an edited result/arguments) refreshes a tool result but,
+ * by design, never drives the conversation forward on its own. That leaves two
+ * dead-ends this detects so an explicit, user-initiated "Respond" can be offered:
+ *   - leaf:  the tool result is the active leaf, so the model never replied.
+ *   - stale: a reply already follows it but was generated from older output.
+ * Returns null when no offer applies (still running, a stopped call, dismissed,
+ * or the reply is already up to date). Derived from structure + staleness at
+ * render time, so it survives reload without writing anything to the .chat file.
+ * @returns {{kind: 'leaf'|'stale', tailID: string}|null}
+ */
+function _toolRespondOffer(message) {
+  if (!message || message.role !== "assistant" || _toolRespondDismissed.has(message.id)) {
+    return null;
+  }
+  const toolCalls = message.customFields && message.customFields.toolCalls;
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
+    return null;
+  }
+  // Every call must be answered and nothing still executing for this turn.
+  if (!toolCalls.every((call) => _findToolResult(call.id))) {
+    return null;
+  }
+  if (Object.values(_pendingToolRequests).some((req) => req.assistantID === message.id)) {
+    return null;
+  }
+  // A stopped call has its own explicit Continue (stopped-continue); leave it be.
+  const anyStopped = toolCalls.some((call) => {
+    const result = _findToolResult(call.id);
+    return result && result.customFields && result.customFields.stopped;
+  });
+  if (anyStopped) {
+    return null;
+  }
+  const tailID = _toolChainTail(message.id);
+  const tailIndex = activePath.indexOf(tailID);
+  if (tailIndex === -1) {
+    return null;
+  }
+  const nextID = tailIndex + 1 < activePath.length ? activePath[tailIndex + 1] : null;
+  if (!nextID) {
+    return { kind: "leaf", tailID: tailID };
+  }
+  const next = flatMessages[nextID];
+  if (next && next.role === "assistant" && _staleMessageIDs.has(nextID)) {
+    return { kind: "stale", tailID: tailID };
+  }
+  return null;
+}
+
+/**
+ * Renders the quiet "Respond" offer beneath a settled tool chain the model has
+ * not reacted to (see _toolRespondOffer). Reuses the tool approval bar so it sits
+ * in the one place tool-flow decisions already live. Respond continues from the
+ * tool tail: it creates the first reply (leaf) or, when a stale reply already
+ * exists, a new sibling branch (non-destructive), leaving the older reply intact.
+ */
+function _appendToolRespondBar(messageContent, message) {
+  const offer = _toolRespondOffer(message);
+  if (!offer) {
+    return;
+  }
+  const stale = offer.kind === "stale";
+
+  const bar = document.createElement("div");
+  bar.className = "tool-approval-bar";
+
+  const label = document.createElement("span");
+  label.className = "tool-approval-label";
+  label.textContent = stale ? "Result changed since this reply." : "No reply yet.";
+  bar.appendChild(label);
+
+  bar.appendChild(_toolBarButton(stale ? "Respond again" : "Respond", "primary", () => {
+    _toolRespondDismissed.delete(message.id);
+    const tail = flatMessages[offer.tailID];
+    if (tail) {
+      // User-initiated, so treat it like a normal send: reset the auto-run cap.
+      sendMessage(tail);
+    }
+  }));
+  bar.appendChild(_toolBarButton(stale ? "Keep" : "Dismiss", "", () => {
+    _toolRespondDismissed.add(message.id);
     rerenderMessage(message.id);
   }));
   messageContent.appendChild(bar);
