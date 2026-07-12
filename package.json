@@ -2,10 +2,10 @@
   "name": "integrated-conversational-environment",
   "displayName": "ICE - Integrated Conversational Environment",
   "icon": "images/icon.png",
-  "description": "LLM conversations in VSCode (Formerly FlowChat)",
+  "description": "Your conversations with language models, as editable, forkable .chat files in VS Code.",
   "repository": "https://github.com/richardhyy/ice-vscode",
   "publisher": "LeaForest",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.84.0"
@@ -14,11 +14,11 @@
     "Other"
   ],
   "keywords": [
+    "prompt-engineering",
     "chat",
     "llm",
     "ChatGPT",
-    "Claude",
-    "api"
+    "Claude"
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
