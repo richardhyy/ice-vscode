@@ -5,7 +5,6 @@ import * as child_process from 'child_process';
 import * as crypto from 'crypto';
 import { ChatMessage } from './chatHistoryManager';
 import { BUILT_IN_SUFFIX } from './constants';
-import { VSCodeLMProvider } from './vscodeLmProvider';
 
 /**
  * Describes the selectable options a provider exposes for a config variable.
@@ -137,7 +136,6 @@ const environmentVariableFunctions = new Map<string, () => string>([
 
 export class ProviderManager {
   private builtInProviders = [
-    'VSCode_LM.js',
     'OpenAI_Compatible.js',
     'Claude.js',
     'Gemini.js',
@@ -152,13 +150,6 @@ export class ProviderManager {
   } = {};
   private pendingRequests: Map<string, { onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string, meta?: ProviderCompletionMeta) => void }> = new Map();
   private pendingOptionRequests: Map<string, { resolve: (options: ProviderOption[]) => void, reject: (error: Error) => void }> = new Map();
-
-  /**
-   * Handler for providers that run in the extension host instead of a forked
-   * child process (declared via `@_runtime vscode-lm`). Kept as a single shared
-   * instance so it can track in-flight requests for cancellation.
-   */
-  private readonly vscodeLm = new VSCodeLMProvider();
 
   constructor(private context: vscode.ExtensionContext) {
     // Create custom provider directory if it doesn't exist
@@ -559,14 +550,6 @@ export class ProviderManager {
 
     let { config } = this.providers[providerID];
 
-    // Some providers run in the extension host rather than a forked child
-    // process. They declare this in their header (`@_runtime <name>`), which is
-    // parsed into `config.info._runtime`. The VS Code language model provider
-    // uses this because `vscode.lm` is only available in the extension host.
-    if (config && config.info && config.info['_runtime'] === 'vscode-lm') {
-      return this.buildVSCodeLMProvider(providerID, config);
-    }
-
     // Return a Provider interface that uses the existing or newly initialized child process.
     return {
       id: providerID,
@@ -650,45 +633,6 @@ export class ProviderManager {
           child.send({ type: 'cancel', requestID });
         }
       }
-    };
-  }
-
-  /**
-   * Builds a Provider for an in-process runtime backed by VS Code's language
-   * model API. Configuration is resolved exactly like the child-process path
-   * (stored values overlaid with inline overrides, with built-in system-prompt
-   * variables filled), then handed to the shared {@link VSCodeLMProvider}. This
-   * provider declares no secrets, so no key is ever requested.
-   */
-  private buildVSCodeLMProvider(providerID: string, config: ProviderConfig): Provider {
-    return {
-      id: providerID,
-      info: config.info,
-      configKeys: {
-        secureVariables: Object.keys(config.secureVariables),
-        requiredVariables: Object.keys(config.requiredVariables),
-        optionalVariables: Object.keys(config.optionalVariables),
-      },
-      options: config.options || {},
-      getCompletion: async (messageTrail: ChatMessage[], configOverride: { [key: string]: string }, tools: ToolDefinition[],
-                            onStream: (partialText: string, reasoningText?: string) => void, onCompletion: (finalText: string, meta?: ProviderCompletionMeta) => void) => {
-        const resolved = await this.readProviderConfig(providerID);
-        let mergedConfig: { [key: string]: string | null } = {
-          ...resolved.requiredVariables,
-          ...resolved.optionalVariables,
-          ...configOverride,
-        };
-        mergedConfig = this.fillSystemPromptWithEnvironmentVariables(mergedConfig);
-        return this.vscodeLm.getCompletion(mergedConfig, messageTrail, tools || [], onStream, onCompletion);
-      },
-      listOptions: async (variableName: string, configOverride: { [key: string]: string } = {}) => {
-        const resolved = await this.readProviderConfig(providerID);
-        const mergedConfig = { ...resolved.requiredVariables, ...resolved.optionalVariables, ...configOverride };
-        return this.vscodeLm.listOptions(variableName, mergedConfig);
-      },
-      requestCancel: (requestID: string) => {
-        this.vscodeLm.requestCancel(requestID);
-      },
     };
   }
 
